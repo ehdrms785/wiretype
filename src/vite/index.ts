@@ -1,0 +1,241 @@
+import http from 'node:http';
+import https from 'node:https';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Buffer } from 'node:buffer';
+import {
+  brotliDecompressSync,
+  gunzipSync,
+  inflateRawSync,
+  inflateSync,
+} from 'node:zlib';
+import type { Plugin, ViteDevServer, Connect } from 'vite';
+import type { Exchange, RecorderOptions } from '../core/index.js';
+import { RecordingStore } from '../core/index.js';
+import { buildExchange, shouldRecord } from '../proxy/index.js';
+
+export interface WiretypePluginOptions extends RecorderOptions {
+  /** Upstream API base URL, e.g. "http://localhost:8080". */
+  target: string;
+  /** Path prefixes to intercept+forward, e.g. ["/api"]. Required. */
+  prefixes: string[];
+  /** Recording name. Default "vite". */
+  name?: string;
+  /** Store directory. Default ".wiretype". */
+  dir?: string;
+  /** Master switch, e.g. enabled: !!process.env.WIRETYPE. Default true. */
+  enabled?: boolean;
+}
+
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'transfer-encoding',
+  'upgrade',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+]);
+
+function stripHopByHop(
+  headers: Record<string, string | string[] | undefined>,
+): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP.has(lower)) continue;
+    if (lower.startsWith('proxy-')) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+function decodeEncoded(body: Buffer, encoding: string | undefined): Buffer {
+  if (!encoding) return body;
+  const enc = encoding.toLowerCase().trim();
+  try {
+    if (enc === 'gzip' || enc === 'x-gzip') return gunzipSync(body);
+    if (enc === 'br') return brotliDecompressSync(body);
+    if (enc === 'deflate') {
+      try {
+        return inflateSync(body);
+      } catch {
+        return inflateRawSync(body);
+      }
+    }
+  } catch {
+    // keep raw
+  }
+  return body;
+}
+
+function collectRequestBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function resolveTarget(target: string, reqUrl: string): URL {
+  const base = new URL(target);
+  const incoming = new URL(reqUrl, 'http://placeholder');
+  const basePath = base.pathname.replace(/\/+$/, '');
+  return new URL(basePath + incoming.pathname + incoming.search, base);
+}
+
+export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin {
+  const enabled = options.enabled ?? true;
+  const name = options.name ?? 'vite';
+  const dir = options.dir ?? '.wiretype';
+  const recorderOpts: RecorderOptions = {
+    includePrefixes: options.includePrefixes,
+    excludePrefixes: options.excludePrefixes,
+    maxBodyBytes: options.maxBodyBytes,
+    redactHeaders: options.redactHeaders,
+  };
+
+  let store: RecordingStore | undefined;
+  let initialized: Promise<void> | undefined;
+
+  const ensureStore = (): Promise<void> => {
+    if (!store) store = new RecordingStore(dir);
+    if (!initialized) initialized = store.init(name, options.target);
+    return initialized;
+  };
+
+  const matchesPrefix = (path: string): boolean =>
+    options.prefixes.some((prefix) => path.startsWith(prefix));
+
+  const middleware: Connect.NextHandleFunction = (req, res, next) => {
+    const rawUrl = req.url ?? '/';
+    const path = rawUrl.split('?')[0] ?? rawUrl;
+
+    if (!enabled || !matchesPrefix(path)) {
+      next();
+      return;
+    }
+
+    const startedAt = Date.now();
+    const method = req.method ?? 'GET';
+
+    let resolved: URL;
+    try {
+      resolved = resolveTarget(options.target, rawUrl);
+    } catch {
+      send502(res, 'invalid target');
+      return;
+    }
+
+    const isHttps = resolved.protocol === 'https:';
+    const transport = isHttps ? https : http;
+
+    const forwardHeaders = stripHopByHop(req.headers);
+    forwardHeaders['host'] = resolved.host;
+
+    collectRequestBody(req)
+      .then((reqBody) => {
+        const upstreamReq = transport.request(
+          {
+            protocol: resolved.protocol,
+            hostname: resolved.hostname,
+            port: resolved.port || (isHttps ? 443 : 80),
+            method,
+            path: resolved.pathname + resolved.search,
+            headers: forwardHeaders,
+          },
+          (upstreamRes: IncomingMessage) => {
+            const status = upstreamRes.statusCode ?? 502;
+            const resHeaders = stripHopByHop(upstreamRes.headers);
+            res.writeHead(status, resHeaders);
+
+            const captureChunks: Buffer[] = [];
+            upstreamRes.on('data', (chunk: Buffer) => {
+              res.write(chunk);
+              captureChunks.push(chunk);
+            });
+            upstreamRes.on('end', () => {
+              res.end();
+              const endedAt = Date.now();
+
+              if (!shouldRecord(path, recorderOpts)) return;
+
+              const rawBody: Buffer = Buffer.concat(captureChunks);
+              const encoding = upstreamRes.headers['content-encoding'];
+              const encStr = Array.isArray(encoding) ? encoding[0] : encoding;
+              const capturedBody: Buffer = decodeEncoded(rawBody, encStr);
+
+              const captureResHeaders: Record<string, string | string[] | undefined> = {
+                ...upstreamRes.headers,
+              };
+              delete captureResHeaders['content-encoding'];
+              delete captureResHeaders['content-length'];
+
+              void record({
+                method,
+                url: rawUrl,
+                reqHeaders: req.headers,
+                reqBody,
+                status,
+                resHeaders: captureResHeaders,
+                resBody: capturedBody,
+                startedAt,
+                endedAt,
+              });
+            });
+            upstreamRes.on('error', () => {
+              if (!res.writableEnded) res.end();
+            });
+          },
+        );
+
+        upstreamReq.on('error', (err: Error) => {
+          send502(res, err.message);
+        });
+
+        if (reqBody.length > 0) upstreamReq.write(reqBody);
+        upstreamReq.end();
+      })
+      .catch(() => {
+        send502(res, 'failed to read request body');
+      });
+  };
+
+  const record = async (input: {
+    method: string;
+    url: string;
+    reqHeaders: Record<string, string | string[] | undefined>;
+    reqBody: Buffer;
+    status: number;
+    resHeaders: Record<string, string | string[] | undefined>;
+    resBody: Buffer;
+    startedAt: number;
+    endedAt: number;
+  }): Promise<void> => {
+    try {
+      await ensureStore();
+      const exchange: Exchange = buildExchange({ ...input, opts: recorderOpts });
+      await store!.append(name, exchange);
+    } catch {
+      // Recording failures must never break the dev server.
+    }
+  };
+
+  return {
+    name: 'wiretype-recorder',
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use(middleware);
+    },
+  };
+}
+
+function send502(res: ServerResponse, message: string): void {
+  if (res.headersSent || res.writableEnded) {
+    if (!res.writableEnded) res.end();
+    return;
+  }
+  res.writeHead(502, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Bad Gateway', message }));
+}

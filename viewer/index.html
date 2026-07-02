@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>wiretype — API viewer</title>
+<style>
+/* ================================================================== */
+/* Palette & tokens                                                   */
+/* ================================================================== */
+:root {
+  --bg: #0d1117;
+  --bg-1: #11161d;
+  --bg-2: #161c24;
+  --bg-3: #1c232d;
+  --bg-hover: #202836;
+  --border: #232b36;
+  --border-strong: #313a47;
+  --text: #e6edf3;
+  --text-dim: #9aa7b4;
+  --text-faint: #66727e;
+  --accent: #6ea8fe;
+  --accent-dim: #2b4a7a;
+  --accent-soft: rgba(110, 168, 254, 0.12);
+
+  /* method colors */
+  --m-get: #3fb950;
+  --m-post: #58a6ff;
+  --m-put: #d29922;
+  --m-patch: #d29922;
+  --m-delete: #f85149;
+  --m-other: #9aa7b4;
+
+  /* status colors */
+  --s-2xx: #3fb950;
+  --s-3xx: #58a6ff;
+  --s-4xx: #d29922;
+  --s-5xx: #f85149;
+
+  /* syntax */
+  --syn-key: #79c0ff;
+  --syn-string: #a5d6ff;
+  --syn-number: #d2a8ff;
+  --syn-bool: #ff7b72;
+  --syn-null: #ff7b72;
+  --syn-punc: #8b949e;
+  --syn-keyword: #ff7b72;
+  --syn-type: #ffa657;
+  --syn-comment: #6e7681;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ================================================================== */
+/* Layout                                                             */
+/* ================================================================== */
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+
+header.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 18px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  min-height: 52px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+.brand .logo {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #a371f7);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #05070a; font-weight: 800; font-size: 13px;
+  font-family: var(--mono);
+}
+.brand .sub { color: var(--text-faint); font-weight: 500; font-size: 12px; }
+.topbar .loaded {
+  color: var(--text-dim);
+  font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+}
+.topbar .loaded strong { color: var(--text); font-weight: 600; }
+.topbar .spacer { flex: 1; }
+.topbar .actions { display: flex; align-items: center; gap: 8px; }
+
+.btn {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--bg-hover); border-color: var(--accent-dim); }
+.btn:active { transform: translateY(1px); }
+.btn.icon { display: inline-flex; align-items: center; gap: 6px; }
+
+.main {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 0;
+}
+
+/* ---- sidebar ---- */
+aside.sidebar {
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.sidebar .side-head {
+  padding: 12px 14px 8px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.sidebar .side-head .title {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 700;
+}
+.sidebar .side-head .count {
+  font-size: 11px; color: var(--text-faint);
+  background: var(--bg-3); padding: 1px 7px; border-radius: 10px;
+}
+.rec-list { overflow-y: auto; padding: 4px 8px 16px; flex: 1; }
+.rec-item {
+  padding: 10px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 3px;
+}
+.rec-item:hover { background: var(--bg-2); }
+.rec-item.active { background: var(--accent-soft); border-color: var(--accent-dim); }
+.rec-item .name { font-weight: 600; font-size: 13.5px; color: var(--text); word-break: break-all; }
+.rec-item .target { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; word-break: break-all; }
+.rec-item .meta {
+  display: flex; gap: 10px; margin-top: 6px;
+  font-size: 11px; color: var(--text-faint);
+}
+.rec-item .meta .dot::before { content: "·"; margin-right: 6px; color: var(--border-strong); }
+
+/* ---- content ---- */
+.content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+.tabbar {
+  display: flex;
+  gap: 2px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.tab {
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-weight: 500;
+  user-select: none;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.view { flex: 1; min-height: 0; overflow: hidden; display: none; }
+.view.active { display: flex; }
+
+/* endpoints view: two-pane */
+#view-endpoints { flex-direction: row; }
+.ep-list { width: 380px; border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+.ep-detail { flex: 1; overflow-y: auto; min-width: 0; }
+
+.ep-group-head {
+  padding: 10px 14px 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--text-faint); font-weight: 700;
+  position: sticky; top: 0; background: var(--bg); z-index: 1;
+}
+.ep-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.ep-row:hover { background: var(--bg-2); }
+.ep-row.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.ep-row .pattern { font-family: var(--mono); font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row .pattern .param { color: var(--accent); }
+.ep-row .statuses { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* method + status badges */
+.method {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: .03em;
+  flex-shrink: 0;
+  min-width: 48px;
+  text-align: center;
+  color: #05070a;
+}
+.method.GET { background: var(--m-get); }
+.method.POST { background: var(--m-post); }
+.method.PUT { background: var(--m-put); }
+.method.PATCH { background: var(--m-patch); }
+.method.DELETE { background: var(--m-delete); }
+.method.OTHER { background: var(--m-other); }
+
+.status-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.status-chip .c { font-weight: 400; opacity: .7; margin-left: 3px; }
+.status-chip.s2 { color: var(--s-2xx); border-color: rgba(63,185,80,.35); background: rgba(63,185,80,.08); }
+.status-chip.s3 { color: var(--s-3xx); border-color: rgba(88,166,255,.35); background: rgba(88,166,255,.08); }
+.status-chip.s4 { color: var(--s-4xx); border-color: rgba(210,153,34,.35); background: rgba(210,153,34,.08); }
+.status-chip.s5 { color: var(--s-5xx); border-color: rgba(248,81,73,.35); background: rgba(248,81,73,.08); }
+
+/* detail pane */
+.detail-inner { padding: 18px 20px 60px; }
+.detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.detail-head .pattern { font-family: var(--mono); font-size: 16px; }
+.detail-head .pattern .param { color: var(--accent); }
+.detail-op { color: var(--text-faint); font-family: var(--mono); font-size: 12px; margin-bottom: 18px; }
+
+.section { margin-bottom: 22px; }
+.section > h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-dim); font-weight: 700; margin: 0 0 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section > h3 .badge { font-size: 10px; color: var(--text-faint); background: var(--bg-3); padding: 1px 6px; border-radius: 8px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+table.params { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.params th, table.params td {
+  text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.params th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+table.params td.name { font-family: var(--mono); color: var(--accent); }
+table.params td.fmt { font-family: var(--mono); color: var(--syn-type); font-size: 12px; }
+table.params td.samples { font-family: var(--mono); color: var(--text-dim); font-size: 12px; word-break: break-all; }
+
+/* type tree */
+.type-tree { font-family: var(--mono); font-size: 12.5px; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 4px; }
+.tt-row { display: flex; align-items: baseline; padding: 1px 10px; white-space: pre; }
+.tt-row.clickable { cursor: pointer; border-radius: 3px; }
+.tt-row.clickable:hover { background: var(--bg-2); }
+.tt-toggle { display: inline-block; width: 14px; color: var(--text-faint); flex-shrink: 0; }
+.tt-key { color: var(--syn-key); }
+.tt-opt { color: var(--syn-keyword); }
+.tt-colon { color: var(--syn-punc); margin: 0 4px 0 0; }
+.tt-type { color: var(--syn-type); }
+.tt-anno { color: var(--syn-comment); font-style: italic; }
+.tt-children.collapsed { display: none; }
+
+.status-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.status-tab {
+  cursor: pointer; padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--bg-2);
+  font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+}
+.status-tab:hover { background: var(--bg-hover); }
+.status-tab.active { border-color: var(--accent-dim); background: var(--accent-soft); color: var(--text); }
+
+/* code blocks */
+pre.code {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin: 0;
+  max-height: 340px;
+  tab-size: 2;
+}
+pre.code.tall { max-height: none; }
+
+/* syntax token classes */
+.tok-key { color: var(--syn-key); }
+.tok-string { color: var(--syn-string); }
+.tok-number { color: var(--syn-number); }
+.tok-bool { color: var(--syn-bool); }
+.tok-null { color: var(--syn-null); }
+.tok-punc { color: var(--syn-punc); }
+.tok-keyword { color: var(--syn-keyword); }
+.tok-type { color: var(--syn-type); }
+.tok-comment { color: var(--syn-comment); font-style: italic; }
+
+/* code tab (generated) */
+.code-view { padding: 16px 20px 40px; display: flex; flex-direction: column; min-height: 0; }
+.code-subtabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.code-subtab {
+  padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border-strong);
+  color: var(--text-dim); font-size: 13px; font-family: var(--mono);
+}
+.code-subtab:hover { background: var(--bg-hover); }
+.code-subtab.active { background: var(--accent-soft); border-color: var(--accent-dim); color: var(--text); }
+.code-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.code-toolbar .fname { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+
+/* exchanges table */
+.xchg-wrap { flex: 1; display: flex; min-width: 0; }
+.xchg-table-wrap { flex: 1; overflow: auto; min-width: 0; }
+table.xchg { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.xchg thead th {
+  position: sticky; top: 0; background: var(--bg-1);
+  text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-faint); font-weight: 700;
+  border-bottom: 1px solid var(--border); z-index: 1;
+}
+table.xchg tbody td { padding: 7px 12px; border-bottom: 1px solid var(--border); }
+table.xchg tbody tr { cursor: pointer; }
+table.xchg tbody tr:hover { background: var(--bg-2); }
+table.xchg tbody tr.active { background: var(--accent-soft); }
+table.xchg td.time { color: var(--text-dim); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+table.xchg td.path { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+table.xchg td.dur { color: var(--text-dim); font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
+
+/* drawer */
+.drawer {
+  width: 0;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-1);
+  overflow: hidden;
+  transition: width .18s ease;
+  display: flex; flex-direction: column;
+}
+.drawer.open { width: 480px; }
+.drawer-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.drawer-head .close { margin-left: auto; cursor: pointer; color: var(--text-faint); font-size: 18px; line-height: 1; background: none; border: none; }
+.drawer-head .close:hover { color: var(--text); }
+.drawer-body { overflow-y: auto; padding: 14px 16px 40px; }
+.drawer-body h4 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-faint); margin: 16px 0 6px; font-weight: 700;
+}
+.drawer-body h4:first-child { margin-top: 0; }
+.kv { font-family: var(--mono); font-size: 12px; }
+.kv .row { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+.kv .row .k { color: var(--text-dim); flex-shrink: 0; min-width: 130px; word-break: break-all; }
+.kv .row .v { color: var(--text); word-break: break-all; }
+
+/* empty & error states */
+.empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  color: var(--text-faint); gap: 10px; padding: 40px;
+}
+.empty .big { font-size: 15px; color: var(--text-dim); }
+.empty code { background: var(--bg-3); padding: 2px 8px; border-radius: 5px; color: var(--accent); font-family: var(--mono); }
+.empty .icon { font-size: 34px; opacity: .5; }
+
+.toast-wrap {
+  position: fixed; bottom: 18px; right: 18px; z-index: 50;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.toast {
+  background: var(--bg-3); border: 1px solid var(--s-5xx);
+  color: var(--text); padding: 10px 14px; border-radius: var(--radius);
+  font-size: 13px; max-width: 380px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+  animation: toastin .18s ease;
+}
+.toast .t-title { font-weight: 700; color: var(--s-5xx); margin-bottom: 2px; }
+@keyframes toastin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.spinner {
+  width: 18px; height: 18px; border: 2px solid var(--border-strong);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-dim); }
+
+.hint { color: var(--text-faint); font-size: 12px; }
+.mono { font-family: var(--mono); }
+
+@media (max-width: 1000px) {
+  .main { grid-template-columns: 240px 1fr; }
+  .ep-list { width: 300px; }
+  .drawer.open { width: 360px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">w</span>
+      <span>wiretype</span>
+      <span class="sub">API viewer</span>
+    </div>
+    <div class="loaded" id="loadedLabel"></div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <button class="btn icon" id="refreshBtn" title="Reload recordings & current view">
+        <span id="refreshSpin"></span> Refresh
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="side-head">
+        <span class="title">Recordings</span>
+        <span class="count" id="recCount">0</span>
+      </div>
+      <div class="rec-list" id="recList"></div>
+    </aside>
+
+    <div class="content" id="content">
+      <!-- populated by JS -->
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+"use strict";
+/* ==================================================================
+ * wiretype viewer — single namespace object, small pure functions.
+ * Fetches the same-origin JSON API served by `wiretype ui`.
+ * ================================================================== */
+const App = (() => {
+
+  /* ---------------- state ---------------- */
+  const state = {
+    recordings: [],       // RecordingMeta[]
+    activeName: null,     // string | null
+    tab: 'endpoints',     // 'endpoints' | 'exchanges' | 'code'
+    model: null,          // ApiModel | null
+    recording: null,      // Recording | null
+    activeEndpointKey: null,
+    activeStatusByEndpoint: {}, // key -> status
+    codeTarget: 'ts',     // ts|zod|msw|openapi
+    codeCache: {},        // `${name}:${target}` -> string
+    loadingModel: false,
+    loadingRecording: false,
+  };
+
+  /* ---------------- tiny DOM helpers ---------------- */
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    if (attrs) {
+      for (const k of Object.keys(attrs)) {
+        const v = attrs[k];
+        if (v == null) continue;
+        if (k === 'class') node.className = v;
+        else if (k === 'html') node.innerHTML = v;
+        else if (k === 'text') node.textContent = v;
+        else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+        else node.setAttribute(k, v);
+      }
+    }
+    for (const c of children) {
+      if (c == null) continue;
+      node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return node;
+  }
+  function clear(node) { if (node) while (node.firstChild) node.removeChild(node.firstChild); }
+
+  /* ---------------- utilities ---------------- */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function relTime(ms) {
+    if (!ms && ms !== 0) return '';
+    const diff = Date.now() - ms;
+    if (diff < 0) return 'just now';
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return s <= 3 ? 'just now' : `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30) return `${d}d ago`;
+    const mo = Math.floor(d / 30);
+    if (mo < 12) return `${mo}mo ago`;
+    return `${Math.floor(mo / 12)}y ago`;
+  }
+
+  function fmtTime(ms) {
+    try {
+      const d = new Date(ms);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch { return String(ms); }
+  }
+
+  function methodClass(method) {
+    const m = String(method || '').toUpperCase();
+    return ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(m) ? m : 'OTHER';
+  }
+  function statusClass(status) {
+    const s = Number(status);
+    if (s >= 500) return 's5';
+    if (s >= 400) return 's4';
+    if (s >= 300) return 's3';
+    return 's2';
+  }
+  function endpointKey(ep) { return `${ep.method} ${ep.pattern}`; }
+
+  /* render a pattern with :params highlighted */
+  function patternNodes(pattern) {
+    const frag = document.createDocumentFragment();
+    String(pattern).split('/').forEach((seg, i) => {
+      if (i > 0) frag.appendChild(document.createTextNode('/'));
+      if (seg.startsWith(':')) frag.appendChild(el('span', { class: 'param', text: seg }));
+      else frag.appendChild(document.createTextNode(seg));
+    });
+    return frag;
+  }
+
+  /* ---------------- fetch layer (all guarded) ---------------- */
+  async function api(path) {
+    let res;
+    try {
+      res = await fetch(path, { headers: { accept: 'application/json' } });
+    } catch (e) {
+      throw new Error(`Network error contacting ${path}: ${e && e.message ? e.message : e}`);
+    }
+    if (!res.ok) {
+      let msg = `${res.status} ${res.statusText}`;
+      try {
+        const body = await res.json();
+        if (body && body.error) msg = body.error;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return res;
+  }
+  async function apiJson(path) { return (await api(path)).json(); }
+  async function apiText(path) { return (await api(path)).text(); }
+
+  /* ---------------- toasts ---------------- */
+  function toast(title, message) {
+    const wrap = $('#toasts');
+    if (!wrap) return;
+    const node = el('div', { class: 'toast' },
+      el('div', { class: 't-title', text: title }),
+      el('div', { text: message || '' })
+    );
+    wrap.appendChild(node);
+    setTimeout(() => { node.style.opacity = '0'; setTimeout(() => node.remove(), 250); }, 4200);
+  }
+
+  /* ================================================================
+   * JSON syntax highlighter (regex tokenizer -> safe HTML)
+   * ================================================================ */
+  function highlightJson(value) {
+    let text;
+    try { text = typeof value === 'string' ? value : JSON.stringify(value, null, 2); }
+    catch { text = String(value); }
+    if (text == null) return '';
+    // Tokenize the RAW text (so quote chars are still literal), escape per token.
+    // Match strings (incl. keys), numbers, booleans, null.
+    const re = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      out += escapeHtml(text.slice(last, m.index));
+      last = m.index + m[0].length;
+      const [, str, colon, bool, nul, num] = m;
+      if (str != null) {
+        if (colon != null) out += `<span class="tok-key">${escapeHtml(str)}</span><span class="tok-punc">${escapeHtml(colon)}</span>`;
+        else out += `<span class="tok-string">${escapeHtml(str)}</span>`;
+      } else if (bool != null) out += `<span class="tok-bool">${bool}</span>`;
+      else if (nul != null) out += `<span class="tok-null">${nul}</span>`;
+      else if (num != null) out += `<span class="tok-number">${escapeHtml(num)}</span>`;
+      else out += escapeHtml(m[0]);
+    }
+    out += escapeHtml(text.slice(last));
+    return out;
+  }
+
+  /* ================================================================
+   * Code highlighter (TS/JS-ish + JSON fallback for openapi)
+   * ================================================================ */
+  const CODE_KEYWORDS = new Set([
+    'export', 'import', 'from', 'const', 'let', 'var', 'interface', 'type',
+    'return', 'as', 'default', 'function', 'extends', 'implements', 'enum',
+    'namespace', 'declare', 'readonly', 'new', 'z', 'http', 'HttpResponse',
+  ]);
+  function highlightCode(source, target) {
+    if (source == null) return '';
+    if (target === 'openapi') return highlightJson(source);
+    // token order matters: comments, strings, then words/numbers.
+    // Tokenize RAW source, escape per token so quote chars stay literal.
+    const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|('(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)|\b([A-Za-z_$][\w$]*)\b|(-?\b\d+(?:\.\d+)?\b)/g;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      out += escapeHtml(source.slice(last, m.index));
+      last = m.index + m[0].length;
+      const [, comment, str, word, num] = m;
+      if (comment != null) out += `<span class="tok-comment">${escapeHtml(comment)}</span>`;
+      else if (str != null) out += `<span class="tok-string">${escapeHtml(str)}</span>`;
+      else if (num != null) out += `<span class="tok-number">${escapeHtml(num)}</span>`;
+      else if (word != null) {
+        if (CODE_KEYWORDS.has(word)) out += `<span class="tok-keyword">${word}</span>`;
+        else if (/^[A-Z]/.test(word)) out += `<span class="tok-type">${escapeHtml(word)}</span>`;
+        else out += escapeHtml(word);
+      } else out += escapeHtml(m[0]);
+    }
+    out += escapeHtml(source.slice(last));
+    return out;
+  }
+
+  /* ================================================================
+   * Shape AST -> label + recursive type tree
+   * ================================================================ */
+  // Inline one-line type label for a shape (used for leaf types & union parts).
+  function shapeLabel(shape) {
+    if (!shape) return 'unknown';
+    switch (shape.kind) {
+      case 'primitive': {
+        if (Array.isArray(shape.enum) && shape.enum.length) {
+          return shape.enum.map((v) => (typeof v === 'string' ? `"${v}"` : String(v))).join(' | ');
+        }
+        return shape.type;
+      }
+      case 'null': return 'null';
+      case 'unknown': return 'unknown';
+      case 'array': {
+        const inner = shape.element ? shapeLabel(shape.element) : 'unknown';
+        const needsParen = shape.element && shape.element.kind === 'union';
+        return needsParen ? `(${inner})[]` : `${inner}[]`;
+      }
+      case 'record': return `Record<string, ${shapeLabel(shape.value)}>`;
+      case 'union': return (shape.variants || []).map(shapeLabel).join(' | ');
+      case 'object': {
+        const keys = Object.keys(shape.fields || {});
+        return keys.length ? `object {${keys.length}}` : 'object {}';
+      }
+      default: return 'unknown';
+    }
+  }
+
+  // Annotations (format/enum) shown dimmed after a type.
+  function shapeAnnotation(shape) {
+    if (!shape || shape.kind !== 'primitive') return '';
+    const parts = [];
+    if (Array.isArray(shape.formats) && shape.formats.length) parts.push(shape.formats.join(', '));
+    if (Array.isArray(shape.enum) && shape.enum.length) parts.push('enum');
+    return parts.length ? `  // ${parts.join(' · ')}` : '';
+  }
+
+  // Whether a shape can be expanded (has nested rows).
+  function isExpandable(shape) {
+    if (!shape) return false;
+    if (shape.kind === 'object') return Object.keys(shape.fields || {}).length > 0;
+    if (shape.kind === 'record') return true;
+    if (shape.kind === 'array') return shape.element != null && (shape.element.kind === 'object' || shape.element.kind === 'record' || shape.element.kind === 'array' || shape.element.kind === 'union');
+    if (shape.kind === 'union') return (shape.variants || []).some(isExpandable);
+    return false;
+  }
+
+  let ttSeq = 0;
+  /**
+   * Render a shape as an expandable type tree.
+   * name/optional describe the field-context; pass name=null for a root.
+   */
+  function renderTypeTree(shape, name, optional, depth) {
+    depth = depth || 0;
+    const container = document.createDocumentFragment();
+
+    if (!shape) {
+      container.appendChild(typeRow({ name, optional, typeText: 'unknown', depth }));
+      return container;
+    }
+
+    if (shape.kind === 'object') {
+      const keys = Object.keys(shape.fields || {});
+      const expandable = keys.length > 0;
+      const kids = el('div', { class: 'tt-children' });
+      keys.forEach((k) => {
+        const f = shape.fields[k];
+        kids.appendChild(renderTypeTree(f.shape, k, !!f.optional, depth + 1));
+      });
+      container.appendChild(collapsibleRow({
+        name, optional, typeText: `object {${keys.length}}`, depth,
+        expandable, children: kids,
+      }));
+      return container;
+    }
+
+    if (shape.kind === 'record') {
+      const kids = el('div', { class: 'tt-children' });
+      kids.appendChild(renderTypeTree(shape.value, '[key]', false, depth + 1));
+      container.appendChild(collapsibleRow({
+        name, optional, typeText: 'Record<string, …>', depth,
+        expandable: true, children: kids,
+      }));
+      return container;
+    }
+
+    if (shape.kind === 'array') {
+      if (shape.element && isExpandable(shape.element)) {
+        const kids = el('div', { class: 'tt-children' });
+        kids.appendChild(renderTypeTree(shape.element, '[]', false, depth + 1));
+        container.appendChild(collapsibleRow({
+          name, optional, typeText: `${shapeLabel(shape.element)}[]`, depth,
+          expandable: true, children: kids,
+        }));
+        return container;
+      }
+      container.appendChild(typeRow({ name, optional, typeText: shapeLabel(shape), depth }));
+      return container;
+    }
+
+    if (shape.kind === 'union') {
+      const anyExpandable = (shape.variants || []).some(isExpandable);
+      if (anyExpandable) {
+        const kids = el('div', { class: 'tt-children' });
+        (shape.variants || []).forEach((v, i) => {
+          kids.appendChild(renderTypeTree(v, `| ${i}`, false, depth + 1));
+        });
+        container.appendChild(collapsibleRow({
+          name, optional, typeText: shapeLabel(shape), depth,
+          expandable: true, children: kids,
+        }));
+        return container;
+      }
+      container.appendChild(typeRow({ name, optional, typeText: shapeLabel(shape), depth, anno: shapeAnnotation(shape.variants && shape.variants[0]) }));
+      return container;
+    }
+
+    // primitive / null / unknown
+    container.appendChild(typeRow({ name, optional, typeText: shapeLabel(shape), depth, anno: shapeAnnotation(shape) }));
+    return container;
+  }
+
+  function rowIndent(depth) { return '  '.repeat(Math.max(0, depth)); }
+
+  function typeRow({ name, optional, typeText, depth, anno }) {
+    const row = el('div', { class: 'tt-row' });
+    row.appendChild(el('span', { class: 'tt-toggle', text: '' }));
+    row.appendChild(document.createTextNode(rowIndent(depth)));
+    if (name != null) {
+      row.appendChild(el('span', { class: 'tt-key', text: name }));
+      if (optional) row.appendChild(el('span', { class: 'tt-opt', text: '?' }));
+      row.appendChild(el('span', { class: 'tt-colon', text: ':' }));
+      row.appendChild(document.createTextNode(' '));
+    }
+    row.appendChild(el('span', { class: 'tt-type', text: typeText }));
+    if (anno) row.appendChild(el('span', { class: 'tt-anno', text: anno }));
+    return row;
+  }
+
+  function collapsibleRow({ name, optional, typeText, depth, expandable, children }) {
+    const wrap = el('div');
+    const row = el('div', { class: 'tt-row' + (expandable ? ' clickable' : '') });
+    const toggle = el('span', { class: 'tt-toggle', text: expandable ? '▸' : '' });
+    row.appendChild(toggle);
+    row.appendChild(document.createTextNode(rowIndent(depth)));
+    if (name != null) {
+      row.appendChild(el('span', { class: 'tt-key', text: name }));
+      if (optional) row.appendChild(el('span', { class: 'tt-opt', text: '?' }));
+      row.appendChild(el('span', { class: 'tt-colon', text: ':' }));
+      row.appendChild(document.createTextNode(' '));
+    }
+    row.appendChild(el('span', { class: 'tt-type', text: typeText }));
+    wrap.appendChild(row);
+    if (expandable && children) {
+      // default expanded for shallow depth, collapsed deeper.
+      const startCollapsed = depth >= 2;
+      if (startCollapsed) children.classList.add('collapsed');
+      toggle.textContent = startCollapsed ? '▸' : '▾';
+      row.addEventListener('click', () => {
+        const collapsed = children.classList.toggle('collapsed');
+        toggle.textContent = collapsed ? '▸' : '▾';
+      });
+      wrap.appendChild(children);
+    }
+    return wrap;
+  }
+
+  /* ================================================================
+   * Rendering: sidebar
+   * ================================================================ */
+  function renderSidebar() {
+    const list = $('#recList');
+    const count = $('#recCount');
+    if (count) count.textContent = String(state.recordings.length);
+    if (!list) return;
+    clear(list);
+
+    if (!state.recordings.length) {
+      list.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'big', text: 'No recordings yet' }),
+        el('div', { class: 'hint', html: 'Run <code>wiretype record</code> to capture traffic.' })
+      ));
+      return;
+    }
+
+    state.recordings.forEach((rec) => {
+      const item = el('div', {
+        class: 'rec-item' + (rec.name === state.activeName ? ' active' : ''),
+        onclick: () => selectRecording(rec.name),
+        tabindex: '0',
+        role: 'button',
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRecording(rec.name); } },
+      },
+        el('div', { class: 'name', text: rec.name || '(unnamed)' }),
+        el('div', { class: 'target', text: rec.target || '' }),
+        el('div', { class: 'meta' },
+          el('span', { text: `${rec.exchangeCount != null ? rec.exchangeCount : 0} exchanges` }),
+          el('span', { class: 'dot', text: relTime(rec.updatedAt) })
+        )
+      );
+      list.appendChild(item);
+    });
+  }
+
+  function renderLoadedLabel() {
+    const lbl = $('#loadedLabel');
+    if (!lbl) return;
+    clear(lbl);
+    if (state.activeName) {
+      lbl.appendChild(document.createTextNode('/ '));
+      lbl.appendChild(el('strong', { text: state.activeName }));
+      const meta = state.recordings.find((r) => r.name === state.activeName);
+      if (meta) lbl.appendChild(el('span', { text: `  ${meta.target || ''}` }));
+    }
+  }
+
+  /* ================================================================
+   * Rendering: content shell (tabs)
+   * ================================================================ */
+  function renderContent() {
+    const content = $('#content');
+    if (!content) return;
+    clear(content);
+
+    if (!state.activeName) {
+      content.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon', text: '◎' }),
+        el('div', { class: 'big', text: state.recordings.length ? 'Select a recording' : 'No recordings yet' }),
+        state.recordings.length
+          ? el('div', { class: 'hint', text: 'Pick a recording from the left to inspect its endpoints and traffic.' })
+          : el('div', { class: 'hint', html: 'Run <code>wiretype record --target http://localhost:8080</code> then reload.' })
+      ));
+      return;
+    }
+
+    const tabbar = el('div', { class: 'tabbar' });
+    [['endpoints', 'Endpoints'], ['exchanges', 'Exchanges'], ['code', 'Code']].forEach(([id, label]) => {
+      tabbar.appendChild(el('div', {
+        class: 'tab' + (state.tab === id ? ' active' : ''),
+        text: label,
+        onclick: () => setTab(id),
+      }));
+    });
+    content.appendChild(tabbar);
+
+    const viewHost = el('div', { class: 'view active', style: 'flex-direction:column;' });
+    content.appendChild(viewHost);
+
+    if (state.tab === 'endpoints') renderEndpointsView(viewHost);
+    else if (state.tab === 'exchanges') renderExchangesView(viewHost);
+    else if (state.tab === 'code') renderCodeView(viewHost);
+  }
+
+  /* ================================================================
+   * Endpoints view
+   * ================================================================ */
+  function renderEndpointsView(host) {
+    host.style.flexDirection = 'row';
+
+    if (state.loadingModel) {
+      host.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spinner' }), el('span', { text: 'Loading model…' })));
+      return;
+    }
+    const model = state.model;
+    if (!model || !Array.isArray(model.endpoints) || !model.endpoints.length) {
+      host.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon', text: '∅' }),
+        el('div', { class: 'big', text: 'No endpoints inferred' }),
+        el('div', { class: 'hint', text: 'This recording has no JSON exchanges to group. Check the Exchanges tab.' })
+      ));
+      return;
+    }
+
+    // left: endpoint list grouped by first path segment prefix
+    const listPane = el('div', { class: 'ep-list' });
+    const groups = groupEndpoints(model.endpoints);
+    Object.keys(groups).forEach((gname) => {
+      listPane.appendChild(el('div', { class: 'ep-group-head', text: gname }));
+      groups[gname].forEach((ep) => listPane.appendChild(endpointRow(ep)));
+    });
+    host.appendChild(listPane);
+
+    // right: detail
+    const detail = el('div', { class: 'ep-detail', id: 'epDetail' });
+    host.appendChild(detail);
+
+    // ensure a selection
+    if (!state.activeEndpointKey || !model.endpoints.find((e) => endpointKey(e) === state.activeEndpointKey)) {
+      state.activeEndpointKey = endpointKey(model.endpoints[0]);
+    }
+    renderEndpointDetail();
+  }
+
+  function groupEndpoints(endpoints) {
+    const groups = {};
+    endpoints.forEach((ep) => {
+      const segs = String(ep.pattern || '').split('/').filter(Boolean);
+      const key = segs.length >= 2 ? `/${segs[0]}/${segs[1].startsWith(':') ? segs[0] : segs[1]}` : (segs.length ? `/${segs[0]}` : '/');
+      (groups[key] = groups[key] || []).push(ep);
+    });
+    return groups;
+  }
+
+  function endpointRow(ep) {
+    const key = endpointKey(ep);
+    const row = el('div', {
+      class: 'ep-row' + (key === state.activeEndpointKey ? ' active' : ''),
+      onclick: () => { state.activeEndpointKey = key; renderContent(); },
+    });
+    row.appendChild(el('span', { class: 'method ' + methodClass(ep.method), text: (ep.method || '').toUpperCase() }));
+    const pat = el('span', { class: 'pattern' });
+    pat.appendChild(patternNodes(ep.pattern));
+    row.appendChild(pat);
+    const statuses = el('span', { class: 'statuses' });
+    (ep.responses || []).forEach((r) => statuses.appendChild(statusChip(r.status, r.count)));
+    row.appendChild(statuses);
+    return row;
+  }
+
+  function statusChip(status, count) {
+    const chip = el('span', { class: 'status-chip ' + statusClass(status) });
+    chip.appendChild(document.createTextNode(String(status)));
+    if (count != null) chip.appendChild(el('span', { class: 'c', text: '×' + count }));
+    return chip;
+  }
+
+  function renderEndpointDetail() {
+    const host = $('#epDetail');
+    if (!host || !state.model) return;
+    clear(host);
+    const ep = state.model.endpoints.find((e) => endpointKey(e) === state.activeEndpointKey);
+    if (!ep) return;
+
+    const inner = el('div', { class: 'detail-inner' });
+
+    const head = el('div', { class: 'detail-head' });
+    head.appendChild(el('span', { class: 'method ' + methodClass(ep.method), text: (ep.method || '').toUpperCase() }));
+    const pat = el('span', { class: 'pattern' });
+    pat.appendChild(patternNodes(ep.pattern));
+    head.appendChild(pat);
+    inner.appendChild(head);
+    inner.appendChild(el('div', { class: 'detail-op', text: `${ep.operationId || ''}  ·  ${ep.typeName || ''}` }));
+
+    // path params
+    if (Array.isArray(ep.params) && ep.params.length) {
+      const sec = el('div', { class: 'section' });
+      sec.appendChild(el('h3', {}, document.createTextNode('Path params')));
+      const table = el('table', { class: 'params' });
+      table.appendChild(el('thead', {}, (() => {
+        const tr = el('tr');
+        ['Name', 'Format', 'Samples'].forEach((h) => tr.appendChild(el('th', { text: h })));
+        return tr;
+      })()));
+      const tb = el('tbody');
+      ep.params.forEach((p) => {
+        const tr = el('tr');
+        tr.appendChild(el('td', { class: 'name', text: ':' + p.name }));
+        tr.appendChild(el('td', { class: 'fmt', text: p.format || 'string' }));
+        tr.appendChild(el('td', { class: 'samples', text: (p.samples || []).slice(0, 6).join(', ') }));
+        tb.appendChild(tr);
+      });
+      table.appendChild(tb);
+      sec.appendChild(table);
+      inner.appendChild(sec);
+    }
+
+    // query shape
+    if (ep.queryShape) {
+      inner.appendChild(shapeSection('Query', ep.queryShape));
+    }
+
+    // request body
+    if (ep.requestBodyShape) {
+      inner.appendChild(shapeSection('Request body', ep.requestBodyShape, ep.requestSample));
+    } else if (ep.method && ['POST', 'PUT', 'PATCH'].includes(ep.method.toUpperCase())) {
+      const sec = el('div', { class: 'section' });
+      sec.appendChild(el('h3', {}, document.createTextNode('Request body')));
+      sec.appendChild(el('div', { class: 'hint', text: 'non-JSON body (nothing captured)' }));
+      inner.appendChild(sec);
+    }
+
+    // responses (per status)
+    const respSec = el('div', { class: 'section' });
+    respSec.appendChild(el('h3', {},
+      document.createTextNode('Responses'),
+      el('span', { class: 'badge', text: `${(ep.responses || []).length} status` })
+    ));
+    const tabs = el('div', { class: 'status-tabs' });
+    const responses = ep.responses || [];
+    const key = endpointKey(ep);
+    let activeStatus = state.activeStatusByEndpoint[key];
+    if (activeStatus == null || !responses.find((r) => r.status === activeStatus)) {
+      activeStatus = responses.length ? responses[0].status : null;
+      state.activeStatusByEndpoint[key] = activeStatus;
+    }
+    responses.forEach((r) => {
+      tabs.appendChild(el('div', {
+        class: 'status-tab' + (r.status === activeStatus ? ' active' : ''),
+        onclick: () => { state.activeStatusByEndpoint[key] = r.status; renderEndpointDetail(); },
+      },
+        el('span', { class: 'status-chip ' + statusClass(r.status), text: String(r.status) }),
+        document.createTextNode(`  ×${r.count != null ? r.count : 0}`)
+      ));
+    });
+    respSec.appendChild(tabs);
+
+    const active = responses.find((r) => r.status === activeStatus);
+    if (active) {
+      if (active.contentType) respSec.appendChild(el('div', { class: 'hint', style: 'margin-bottom:8px;', text: active.contentType }));
+      if (active.bodyShape) {
+        const tree = el('div', { class: 'type-tree' });
+        tree.appendChild(renderTypeTree(active.bodyShape, null, false, 0));
+        respSec.appendChild(tree);
+      } else {
+        respSec.appendChild(el('div', { class: 'hint', text: 'non-JSON body (no shape inferred)' }));
+      }
+      if (active.sampleBody !== undefined) {
+        respSec.appendChild(el('h4', { style: 'color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px;', text: 'Latest sample' }));
+        const pre = el('pre', { class: 'code' });
+        pre.innerHTML = highlightJson(active.sampleBody);
+        respSec.appendChild(pre);
+      }
+    }
+    inner.appendChild(respSec);
+
+    host.appendChild(inner);
+  }
+
+  function shapeSection(title, shape, sample) {
+    const sec = el('div', { class: 'section' });
+    sec.appendChild(el('h3', {}, document.createTextNode(title)));
+    if (shape) {
+      const tree = el('div', { class: 'type-tree' });
+      tree.appendChild(renderTypeTree(shape, null, false, 0));
+      sec.appendChild(tree);
+    } else {
+      sec.appendChild(el('div', { class: 'hint', text: 'non-JSON body' }));
+    }
+    if (sample !== undefined) {
+      sec.appendChild(el('h4', { style: 'color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px;', text: 'Latest sample' }));
+      const pre = el('pre', { class: 'code' });
+      pre.innerHTML = highlightJson(sample);
+      sec.appendChild(pre);
+    }
+    return sec;
+  }
+
+  /* ================================================================
+   * Exchanges view
+   * ================================================================ */
+  function renderExchangesView(host) {
+    host.style.flexDirection = 'row';
+
+    if (state.loadingRecording) {
+      host.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spinner' }), el('span', { text: 'Loading exchanges…' })));
+      return;
+    }
+    const rec = state.recording;
+    const exchanges = (rec && Array.isArray(rec.exchanges)) ? rec.exchanges.slice() : [];
+    if (!exchanges.length) {
+      host.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon', text: '∅' }),
+        el('div', { class: 'big', text: 'No exchanges recorded' }),
+        el('div', { class: 'hint', text: 'This recording is empty.' })
+      ));
+      return;
+    }
+
+    // reverse-chron
+    exchanges.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+
+    const wrap = el('div', { class: 'xchg-wrap' });
+    const tableWrap = el('div', { class: 'xchg-table-wrap' });
+    const table = el('table', { class: 'xchg' });
+    const thead = el('thead');
+    const htr = el('tr');
+    ['Time', 'Method', 'Path', 'Status', 'ms'].forEach((h) => htr.appendChild(el('th', { text: h })));
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = el('tbody');
+
+    exchanges.forEach((ex) => {
+      const req = ex.request || {};
+      const resp = ex.response || {};
+      const tr = el('tr', { onclick: () => openDrawer(ex, tr) });
+      tr.appendChild(el('td', { class: 'time', text: fmtTime(ex.startedAt) }));
+      const mtd = el('td');
+      mtd.appendChild(el('span', { class: 'method ' + methodClass(req.method), text: (req.method || '').toUpperCase() }));
+      tr.appendChild(mtd);
+      tr.appendChild(el('td', { class: 'path', text: req.path || req.url || '' }));
+      const std = el('td');
+      std.appendChild(statusChip(resp.status));
+      tr.appendChild(std);
+      tr.appendChild(el('td', { class: 'dur', text: resp.durationMs != null ? `${resp.durationMs}` : '' }));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    wrap.appendChild(tableWrap);
+
+    const drawer = el('div', { class: 'drawer', id: 'drawer' });
+    wrap.appendChild(drawer);
+
+    host.appendChild(wrap);
+  }
+
+  function openDrawer(ex, tr) {
+    const drawer = $('#drawer');
+    if (!drawer) return;
+    // active row highlight
+    document.querySelectorAll('table.xchg tbody tr.active').forEach((r) => r.classList.remove('active'));
+    if (tr) tr.classList.add('active');
+
+    clear(drawer);
+    drawer.classList.add('open');
+    const req = ex.request || {};
+    const resp = ex.response || {};
+
+    const head = el('div', { class: 'drawer-head' });
+    head.appendChild(el('span', { class: 'method ' + methodClass(req.method), text: (req.method || '').toUpperCase() }));
+    head.appendChild(el('span', { class: 'mono', style: 'font-size:12.5px;word-break:break-all;', text: req.path || req.url || '' }));
+    head.appendChild(el('button', { class: 'close', text: '×', onclick: closeDrawer, title: 'Close' }));
+    drawer.appendChild(head);
+
+    const body = el('div', { class: 'drawer-body' });
+
+    body.appendChild(el('h4', { text: 'Request' }));
+    body.appendChild(el('div', { class: 'hint', style: 'margin-bottom:6px;', text: `status ${resp.status} · ${resp.durationMs != null ? resp.durationMs + 'ms' : '—'}` }));
+
+    if (req.query && Object.keys(req.query).length) {
+      body.appendChild(el('h4', { text: 'Query' }));
+      body.appendChild(kvBlock(flattenQuery(req.query)));
+    }
+    if (req.headers && Object.keys(req.headers).length) {
+      body.appendChild(el('h4', { text: 'Request headers' }));
+      body.appendChild(kvBlock(req.headers));
+    }
+    body.appendChild(el('h4', { text: 'Request body' }));
+    body.appendChild(bodyBlock(req.bodyJson, req.bodyText));
+
+    body.appendChild(el('h4', { text: 'Response headers' }));
+    if (resp.headers && Object.keys(resp.headers).length) body.appendChild(kvBlock(resp.headers));
+    else body.appendChild(el('div', { class: 'hint', text: 'none' }));
+
+    body.appendChild(el('h4', { text: 'Response body' }));
+    body.appendChild(bodyBlock(resp.bodyJson, resp.bodyText));
+
+    drawer.appendChild(body);
+  }
+
+  function closeDrawer() {
+    const drawer = $('#drawer');
+    if (drawer) { drawer.classList.remove('open'); clear(drawer); }
+    document.querySelectorAll('table.xchg tbody tr.active').forEach((r) => r.classList.remove('active'));
+  }
+
+  function flattenQuery(query) {
+    const out = {};
+    Object.keys(query || {}).forEach((k) => {
+      const v = query[k];
+      out[k] = Array.isArray(v) ? v.join(', ') : String(v);
+    });
+    return out;
+  }
+
+  function kvBlock(obj) {
+    const wrap = el('div', { class: 'kv' });
+    Object.keys(obj || {}).forEach((k) => {
+      wrap.appendChild(el('div', { class: 'row' },
+        el('span', { class: 'k', text: k }),
+        el('span', { class: 'v', text: String(obj[k]) })
+      ));
+    });
+    return wrap;
+  }
+
+  function bodyBlock(json, text) {
+    if (json !== undefined && json !== null) {
+      const pre = el('pre', { class: 'code tall' });
+      pre.innerHTML = highlightJson(json);
+      return pre;
+    }
+    if (text) {
+      const pre = el('pre', { class: 'code tall' });
+      pre.textContent = text;
+      return pre;
+    }
+    return el('div', { class: 'hint', text: 'empty / non-JSON body' });
+  }
+
+  /* ================================================================
+   * Code view (generated targets)
+   * ================================================================ */
+  const CODE_TARGETS = [
+    ['ts', 'TypeScript', 'types.ts'],
+    ['zod', 'Zod', 'schemas.ts'],
+    ['msw', 'MSW', 'handlers.ts'],
+    ['openapi', 'OpenAPI', 'openapi.json'],
+  ];
+
+  function renderCodeView(host) {
+    host.style.flexDirection = 'column';
+    const view = el('div', { class: 'code-view' });
+
+    const subtabs = el('div', { class: 'code-subtabs' });
+    CODE_TARGETS.forEach(([id, label]) => {
+      subtabs.appendChild(el('div', {
+        class: 'code-subtab' + (state.codeTarget === id ? ' active' : ''),
+        text: label,
+        onclick: () => { state.codeTarget = id; renderContent(); },
+      }));
+    });
+    view.appendChild(subtabs);
+
+    const meta = CODE_TARGETS.find((t) => t[0] === state.codeTarget) || CODE_TARGETS[0];
+    const toolbar = el('div', { class: 'code-toolbar' });
+    toolbar.appendChild(el('span', { class: 'fname', text: meta[2] }));
+    const copyBtn = el('button', { class: 'btn', text: 'Copy' });
+    toolbar.appendChild(copyBtn);
+    view.appendChild(toolbar);
+
+    const pre = el('pre', { class: 'code tall', id: 'codePre' });
+    view.appendChild(pre);
+    host.appendChild(view);
+
+    const cacheKey = `${state.activeName}:${state.codeTarget}`;
+    copyBtn.addEventListener('click', () => {
+      const src = state.codeCache[cacheKey];
+      if (src == null) { toast('Nothing to copy', 'Code not loaded yet.'); return; }
+      copyToClipboard(src, copyBtn);
+    });
+
+    if (state.codeCache[cacheKey] != null) {
+      pre.innerHTML = highlightCode(state.codeCache[cacheKey], state.codeTarget);
+      return;
+    }
+
+    pre.innerHTML = '';
+    pre.appendChild(el('span', { class: 'spinner' }));
+    apiText(`/api/recordings/${encodeURIComponent(state.activeName)}/generated/${state.codeTarget}`)
+      .then((txt) => {
+        state.codeCache[cacheKey] = txt;
+        // only paint if still on the same target/recording
+        if (state.tab === 'code' && state.codeTarget === meta[0]) {
+          const p = $('#codePre');
+          if (p) p.innerHTML = highlightCode(txt, state.codeTarget);
+        }
+      })
+      .catch((err) => {
+        toast('Failed to load code', err.message || String(err));
+        const p = $('#codePre');
+        if (p) { p.innerHTML = ''; p.appendChild(el('span', { class: 'hint', text: 'Failed to load. Try Refresh.' })); }
+      });
+  }
+
+  function copyToClipboard(text, btn) {
+    const done = () => { if (btn) { const o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = o; }, 1200); } };
+    const fail = () => toast('Copy failed', 'Clipboard unavailable in this context.');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fail);
+      } else {
+        // legacy fallback
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove(); done();
+      }
+    } catch { fail(); }
+  }
+
+  /* ================================================================
+   * Actions / data loading
+   * ================================================================ */
+  function setTab(tab) {
+    state.tab = tab;
+    renderContent();
+    if (tab === 'endpoints' && !state.model && !state.loadingModel) loadModel();
+    if (tab === 'exchanges' && !state.recording && !state.loadingRecording) loadRecording();
+  }
+
+  async function loadRecordings() {
+    try {
+      const data = await apiJson('/api/recordings');
+      state.recordings = Array.isArray(data) ? data : [];
+    } catch (err) {
+      state.recordings = [];
+      toast('Failed to load recordings', err.message || String(err));
+    }
+    // preserve selection if still present, else pick first
+    if (state.activeName && !state.recordings.find((r) => r.name === state.activeName)) {
+      state.activeName = null;
+    }
+    if (!state.activeName && state.recordings.length) {
+      state.activeName = state.recordings[0].name;
+    }
+    renderSidebar();
+    renderLoadedLabel();
+    renderContent();
+    if (state.activeName) {
+      if (state.tab === 'endpoints') loadModel();
+      else if (state.tab === 'exchanges') loadRecording();
+    }
+  }
+
+  function selectRecording(name) {
+    if (state.activeName === name) return;
+    state.activeName = name;
+    state.model = null;
+    state.recording = null;
+    state.activeEndpointKey = null;
+    state.activeStatusByEndpoint = {};
+    state.codeCache = {};
+    renderSidebar();
+    renderLoadedLabel();
+    renderContent();
+    if (state.tab === 'endpoints') loadModel();
+    else if (state.tab === 'exchanges') loadRecording();
+  }
+
+  async function loadModel() {
+    if (!state.activeName) return;
+    const name = state.activeName;
+    state.loadingModel = true;
+    renderContent();
+    try {
+      const model = await apiJson(`/api/recordings/${encodeURIComponent(name)}/model`);
+      if (name !== state.activeName) return; // stale
+      state.model = model;
+    } catch (err) {
+      if (name === state.activeName) { state.model = { endpoints: [] }; }
+      toast('Failed to load model', err.message || String(err));
+    } finally {
+      if (name === state.activeName) { state.loadingModel = false; renderContent(); }
+    }
+  }
+
+  async function loadRecording() {
+    if (!state.activeName) return;
+    const name = state.activeName;
+    state.loadingRecording = true;
+    renderContent();
+    try {
+      const rec = await apiJson(`/api/recordings/${encodeURIComponent(name)}`);
+      if (name !== state.activeName) return;
+      state.recording = rec;
+    } catch (err) {
+      if (name === state.activeName) { state.recording = { exchanges: [] }; }
+      toast('Failed to load exchanges', err.message || String(err));
+    } finally {
+      if (name === state.activeName) { state.loadingRecording = false; renderContent(); }
+    }
+  }
+
+  async function refresh() {
+    const spin = $('#refreshSpin');
+    if (spin) spin.className = 'spinner';
+    // clear caches for active recording so we re-fetch
+    state.model = null;
+    state.recording = null;
+    state.codeCache = {};
+    await loadRecordings();
+    if (spin) spin.className = '';
+  }
+
+  /* ---------------- init ---------------- */
+  function init() {
+    const rb = $('#refreshBtn');
+    if (rb) rb.addEventListener('click', refresh);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey && document.activeElement === document.body) {
+        e.preventDefault(); refresh();
+      }
+      if (e.key === 'Escape') closeDrawer();
+    });
+    loadRecordings();
+  }
+
+  return { init, state, highlightJson, highlightCode, shapeLabel, relTime, renderTypeTree };
+})();
+
+document.addEventListener('DOMContentLoaded', App.init);
+</script>
+</body>
+</html>

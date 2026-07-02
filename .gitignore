@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.wiretype/
+wiretype-generated/
+*.tgz
