@@ -8,7 +8,7 @@ import {
   inflateRawSync,
   inflateSync,
 } from 'node:zlib';
-import type { Plugin, ViteDevServer, Connect } from 'vite';
+import type { Plugin, ResolvedConfig, ViteDevServer, Connect } from 'vite';
 import type { Exchange, RecorderOptions } from '../core/index.js';
 import { RecordingStore } from '../core/index.js';
 import { buildExchange, shouldRecord } from '../proxy/index.js';
@@ -22,8 +22,27 @@ export interface WiretypePluginOptions extends RecorderOptions {
   name?: string;
   /** Store directory. Default ".wiretype". */
   dir?: string;
-  /** Master switch, e.g. enabled: !!process.env.WIRETYPE. Default true. */
+  /**
+   * Master switch. When omitted (the recommended setup), recording
+   * auto-enables if the Vite dev server runs in mode "record"
+   * (`vite --mode record`) OR the WIRETYPE env var is set. Set an explicit
+   * boolean to override. This is what lets users avoid `WIRETYPE=1`: they
+   * add the plugin unconditionally and run `vite --mode record`.
+   */
   enabled?: boolean;
+}
+
+/**
+ * Resolve the effective enabled flag: an explicit option always wins;
+ * otherwise recording auto-enables in mode "record" or when the WIRETYPE
+ * env var is set. Pure — exported for tests.
+ */
+export function resolveEnabled(
+  explicit: boolean | undefined,
+  mode: string,
+  envSet: boolean,
+): boolean {
+  return explicit ?? (mode === 'record' || envSet);
 }
 
 const HOP_BY_HOP = new Set([
@@ -87,7 +106,9 @@ function resolveTarget(target: string, reqUrl: string): URL {
 }
 
 export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin {
-  const enabled = options.enabled ?? true;
+  // Recomputed in configResolved once the actual mode is known; the initial
+  // value only matters if the plugin is used outside a full Vite lifecycle.
+  let enabled = resolveEnabled(options.enabled, '', !!process.env.WIRETYPE);
   const name = options.name ?? 'vite';
   const dir = options.dir ?? '.wiretype';
   const recorderOpts: RecorderOptions = {
@@ -225,6 +246,9 @@ export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin
 
   return {
     name: 'wiretype-recorder',
+    configResolved(config: ResolvedConfig) {
+      enabled = resolveEnabled(options.enabled, config.mode, !!process.env.WIRETYPE);
+    },
     configureServer(server: ViteDevServer) {
       server.middlewares.use(middleware);
     },

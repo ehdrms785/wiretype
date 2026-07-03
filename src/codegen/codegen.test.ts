@@ -436,6 +436,92 @@ describe('generateAll', () => {
   });
 });
 
+describe('generateMsw with mswFixtures', () => {
+  const out = generateMsw(fixtureModel, { mswFixtures: true });
+
+  it('imports each fixture from ./fixtures/<operationId>.<status>.json', () => {
+    expect(out).toContain(
+      "import getApiUsersByUserIdResponse200 from './fixtures/getApiUsersByUserId.200.json';",
+    );
+    expect(out).toContain(
+      "import getApiUsersByUserIdResponse404 from './fixtures/getApiUsersByUserId.404.json';",
+    );
+    expect(out).toContain("import postApiUsersResponse201 from './fixtures/postApiUsers.201.json';");
+  });
+
+  it('handlers reference the import instead of inlining the body', () => {
+    expect(out).toContain('HttpResponse.json(getApiUsersByUserIdResponse200, { status: 200 })');
+    expect(out).toContain('HttpResponse.json(postApiUsersResponse201, { status: 201 })');
+    // No inline body literal anywhere.
+    expect(out).not.toContain('"11111111-1111-1111-1111-111111111111"');
+    expect(out).not.toContain('"email"');
+  });
+
+  it('commented non-2xx alternative also references its fixture', () => {
+    expect(out).toMatch(/\/\/\s+HttpResponse\.json\(getApiUsersByUserIdResponse404, \{ status: 404 \}\)/);
+  });
+
+  it('non-JSON response stays inline (no fixture, no import)', () => {
+    expect(out).toContain(
+      "http.get('*/api/health', () => new HttpResponse(null, { status: 200 }))",
+    );
+    expect(out).not.toContain('getApiHealthResponse200');
+  });
+
+  it('mswFixtures false (or omitted) keeps the inline behavior unchanged', () => {
+    const inline = generateMsw(fixtureModel, { mswFixtures: false });
+    expect(inline).toBe(generateMsw(fixtureModel));
+    expect(inline).not.toContain('./fixtures/');
+  });
+
+  it('is bracket-balanced', () => {
+    expect(bracketsBalanced(out)).toBe(true);
+  });
+});
+
+describe('generateAll with mswFixtures', () => {
+  it('emits handlers.ts then one fixture per response variant with a sampleBody', () => {
+    const files = generateAll(fixtureModel, ['msw'], { mswFixtures: true });
+    expect(files.map((f) => f.path)).toEqual([
+      'handlers.ts',
+      'fixtures/getApiUsersByUserId.200.json',
+      'fixtures/getApiUsersByUserId.404.json',
+      'fixtures/getApiUsers.200.json',
+      'fixtures/postApiUsers.201.json',
+      'fixtures/getApiPostsByPostId.200.json',
+    ]);
+  });
+
+  it('fixture JSON round-trips the sample body (pretty-printed + trailing newline)', () => {
+    const files = generateAll(fixtureModel, ['msw'], { mswFixtures: true });
+    const fixtures = files.filter((f) => f.path.startsWith('fixtures/'));
+    const user200 = fixtures.find((f) => f.path === 'fixtures/getApiUsersByUserId.200.json')!;
+    expect(JSON.parse(user200.content)).toEqual(fixtureModel.endpoints[0]!.responses[0]!.sampleBody);
+    for (const f of fixtures) {
+      expect(f.content.endsWith('\n')).toBe(true);
+      expect(f.content).toContain('\n  '); // 2-space pretty print
+      expect(JSON.parse(f.content)).toBeDefined();
+    }
+  });
+
+  it('no fixtures without the flag or without the msw target', () => {
+    expect(
+      generateAll(fixtureModel, ['msw']).some((f) => f.path.startsWith('fixtures/')),
+    ).toBe(false);
+    expect(
+      generateAll(fixtureModel, ['ts', 'zod'], { mswFixtures: true }).some((f) =>
+        f.path.startsWith('fixtures/'),
+      ),
+    ).toBe(false);
+  });
+
+  it('is deterministic', () => {
+    expect(generateAll(fixtureModel, ['msw'], { mswFixtures: true })).toEqual(
+      generateAll(fixtureModel, ['msw'], { mswFixtures: true }),
+    );
+  });
+});
+
 describe('array element parenthesization', () => {
   it('wraps enum literal unions inside arrays', () => {
     const shape: Shape = {

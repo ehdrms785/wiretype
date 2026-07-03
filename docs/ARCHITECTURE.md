@@ -271,19 +271,61 @@ export interface WiretypePluginOptions extends RecorderOptions {
   name?: string;
   /** Store directory. Default ".wiretype". */
   dir?: string;
-  /** Master switch, e.g. enabled: !!process.env.WIRETYPE. Default true. */
+  /**
+   * Master switch. When omitted (the recommended setup), recording
+   * auto-enables if the Vite dev server runs in mode "record"
+   * (`vite --mode record`) OR the WIRETYPE env var is set. Set an explicit
+   * boolean to override. This is what lets users avoid `WIRETYPE=1`: they
+   * add the plugin unconditionally and run `vite --mode record`.
+   */
   enabled?: boolean;
 }
 
 export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin;
 ```
 
-Implementation: `configureServer(server)` adds a middleware BEFORE vite's
-internals; requests matching `prefixes` are forwarded to `target` with
-node:http, recorded via `buildExchange` + `RecordingStore`, and the response is
-written back. This replaces the user's `server.proxy` entry for those prefixes.
-`vite` is an optional peer dependency (type-only in source + runtime provided by
-the host).
+Implementation: `configResolved(config)` captures `config.mode`; the effective
+enabled flag is `options.enabled ?? (config.mode === 'record' || !!process.env.WIRETYPE)`.
+`configureServer(server)` adds a middleware BEFORE vite's internals; when
+enabled, requests matching `prefixes` are forwarded to `target` with node:http,
+recorded via `buildExchange` + `RecordingStore`, and the response is written
+back (replacing the user's `server.proxy` entry for those prefixes). When
+disabled the plugin is inert (calls `next()`), so it is safe to leave in the
+plugins array permanently. `vite` is an optional peer dependency.
+
+## v0.2 additions — MSW fixtures + localized reports
+
+### MSW fixture separation (codegen)
+
+`CodegenOptions` gains `mswFixtures?: boolean` (default false). `emit-msw.ts`
+and `generateAll` honor it:
+
+- false (current behavior): `handlers.ts` inlines each mock body literal.
+- true: `handlers.ts` becomes thin — each handler imports its mock from
+  `./fixtures/<operationId>.<status>.json` (relative import with
+  `assert { type: 'json' }` omitted; use `import x from './fixtures/..json' with { type: 'json' }`? NO — for portability emit `import x from './fixtures/<...>.json'` and let the bundler resolve; document that consumers may need resolveJsonModule). `generateAll` additionally returns one `GeneratedFile` per fixture at path
+  `fixtures/<operationId>.<status>.json` containing the pretty-printed sample
+  body. This keeps mock DATA in JSON files so refreshing data never touches
+  handler code — the key enabler for `msw-refresh`.
+
+CLI: `wiretype gen --msw-fixtures` sets the flag. Deterministic output.
+
+### Localized markdown report (diff)
+
+`wiretype diff` gains `--md` and `--lang <en|ko>` (default en):
+
+- `--md`: emit a Markdown drift report to stdout instead of the plain table:
+  a title, a summary line, and one `##` section per severity with a Markdown
+  findings table (Kind | Endpoint | Path | Change). Deterministic.
+- `--lang`: localize the human-facing strings (severity headings, kind labels,
+  summary sentence, "no drift detected") via an internal message catalog
+  covering `en` and `ko`. Machine fields (endpoint, path, before→after) are not
+  translated. Unknown lang → fall back to `en`. `--json` output is never
+  localized. Skills pass `--lang` to match the conversation language and layer
+  code locations on top of the `--md` output.
+
+Add a `src/drift/i18n.ts` with a typed catalog `Record<'en'|'ko', {...}>` and a
+`renderMarkdownReport(report, lang)` function exported from `src/drift/index.ts`.
 
 ## examples/demo-api
 

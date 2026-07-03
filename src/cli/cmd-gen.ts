@@ -10,6 +10,7 @@ export interface GenOptions {
   dir: string;
   out: string;
   targets: string;
+  mswFixtures?: boolean;
 }
 
 export async function runGen(opts: GenOptions): Promise<void> {
@@ -19,7 +20,7 @@ export async function runGen(opts: GenOptions): Promise<void> {
   const recording = await store.load(opts.name);
   const model = buildApiModel(recording);
 
-  const files = generateAll(model, targets);
+  const files = generateAll(model, targets, { mswFixtures: opts.mswFixtures ?? false });
 
   await mkdir(opts.out, { recursive: true });
   for (const file of files) {

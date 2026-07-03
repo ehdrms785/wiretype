@@ -43,6 +43,7 @@ program
   .option('--dir <dir>', 'store directory', '.wiretype')
   .option('--out <dir>', 'output directory', 'wiretype-generated')
   .option('--targets <targets>', 'comma-separated targets (ts,zod,msw,openapi,model)', 'ts,zod,msw,openapi,model')
+  .option('--msw-fixtures', 'write MSW mock bodies as fixtures/*.json and import them from handlers.ts')
   .action(async (opts) => {
     try {
       await runGen(opts);
@@ -57,7 +58,9 @@ program
   .argument('<a>', 'baseline: model.json path or recording name (what consumers believe)')
   .argument('<b>', 'observed: model.json path or recording name (observed reality)')
   .option('--dir <dir>', 'store directory', '.wiretype')
-  .option('--json', 'print the DriftReport as JSON')
+  .option('--json', 'print the DriftReport as JSON (never localized; wins over --md)')
+  .option('--md', 'print a localized Markdown report instead of the table')
+  .option('--lang <lang>', 'report language for --md (en|ko, unknown falls back to en)', 'en')
   .option('--fail-on <level>', 'exit 1 when a finding at this level or higher exists (breaking|risky|info)')
   .option('--ignore-unmatched', 'ignore endpoints only present on one side')
   .action(async (a: string, b: string, opts) => {

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { RecordingStore, buildApiModel } from '../core/index.js';
 import type { ApiModel } from '../core/index.js';
-import { diffModels } from '../drift/index.js';
+import { diffModels, renderMarkdownReport, resolveLang } from '../drift/index.js';
 import type { DriftFinding, DriftReport, DriftSeverity } from '../drift/index.js';
 import { renderTable } from './util.js';
 
@@ -10,6 +10,8 @@ export interface DiffOptions {
   b: string;
   dir: string;
   json?: boolean;
+  md?: boolean;
+  lang?: string;
   failOn?: string;
   ignoreUnmatched?: boolean;
 }
@@ -84,8 +86,12 @@ export async function runDiff(opts: DiffOptions): Promise<void> {
     ignoreUnmatchedEndpoints: opts.ignoreUnmatched ?? false,
   });
 
+  // --json wins over --md; JSON output is never localized.
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else if (opts.md) {
+    // Unknown --lang values fall back to en without an error.
+    process.stdout.write(renderMarkdownReport(report, resolveLang(opts.lang)));
   } else {
     process.stdout.write(renderHuman(report));
   }

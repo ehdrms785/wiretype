@@ -7,6 +7,12 @@ export interface CodegenOptions {
   banner?: string;
   /** Base URL used in MSW handlers. Default: "*" (match any origin) + pattern. */
   mswBaseUrl?: string;
+  /**
+   * When true, `handlers.ts` imports each mock body from
+   * `./fixtures/<operationId>.<status>.json` instead of inlining it, and
+   * `generateAll` emits those fixture files alongside it. Default false.
+   */
+  mswFixtures?: boolean;
 }
 
 export interface GeneratedFile {

@@ -9,14 +9,14 @@ import type { ApiModel } from '../core/index.js';
 import type { CodegenOptions, GeneratedFile, CodegenTarget } from './options.js';
 import { generateTypes } from './emit-ts.js';
 import { generateZod } from './emit-zod.js';
-import { generateMsw } from './emit-msw.js';
+import { generateMsw, generateMswFixtures } from './emit-msw.js';
 import { generateOpenApi } from './emit-openapi.js';
 import { DEFAULT_BANNER, bannerComment } from './naming.js';
 
 export type { CodegenOptions, GeneratedFile, CodegenTarget } from './options.js';
 export { renderShapeAsTs, generateTypes } from './emit-ts.js';
 export { renderShapeAsZod, generateZod } from './emit-zod.js';
-export { generateMsw } from './emit-msw.js';
+export { generateMsw, generateMswFixtures, fixtureImportName, fixturePath } from './emit-msw.js';
 export { generateOpenApi, shapeToJsonSchema } from './emit-openapi.js';
 
 export const ALL_TARGETS: CodegenTarget[] = ['ts', 'zod', 'msw', 'openapi', 'model'];
@@ -41,6 +41,9 @@ export function generateAll(
         break;
       case 'msw':
         files.push({ path: 'handlers.ts', content: generateMsw(model, opts) });
+        // Thin-handler mode: also emit one JSON fixture per response variant
+        // that has a sampleBody (paths: fixtures/<operationId>.<status>.json).
+        if (opts.mswFixtures === true) files.push(...generateMswFixtures(model));
         break;
       case 'openapi': {
         const banner = opts.banner ?? DEFAULT_BANNER;

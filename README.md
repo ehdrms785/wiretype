@@ -57,13 +57,19 @@ export default defineConfig({
     wiretypeRecorder({
       target: 'http://localhost:8080',
       prefixes: ['/api'],
-      enabled: !!process.env.WIRETYPE,   // opt-in: WIRETYPE=1 npm run dev
     }),
   ],
 });
 ```
 
-Develop as usual, then `npx wiretype gen`. Your MSW handlers are now guaranteed to match the real server.
+```bash
+vite --mode record   # recording on; plain `vite` leaves the plugin inert
+```
+
+Leave the plugin in the array permanently — it only records when the dev
+server runs in mode `record` (or the `WIRETYPE` env var is set; pass
+`enabled` to override). Develop as usual, then `npx wiretype gen`. Your MSW
+handlers are now guaranteed to match the real server.
 
 ## What gets inferred
 
@@ -115,15 +121,20 @@ export const handlers = [
 ];
 ```
 
+Prefer mock data out of handler code? `wiretype gen --msw-fixtures` writes each
+body to `fixtures/<operationId>.<status>.json` and emits a thin `handlers.ts`
+that imports them — re-recording refreshes the JSON without ever touching
+handler code. (JSON imports may need `resolveJsonModule: true` in your tsconfig.)
+
 ## CLI
 
 ```
 wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
-                 [--targets ts,zod,msw,openapi,model]
-wiretype diff    <a> <b> [--dir .wiretype] [--json] [--fail-on breaking|risky|info]
-                 [--ignore-unmatched]
+                 [--targets ts,zod,msw,openapi,model] [--msw-fixtures]
+wiretype diff    <a> <b> [--dir .wiretype] [--json] [--md] [--lang en|ko]
+                 [--fail-on breaking|risky|info] [--ignore-unmatched]
 wiretype list    [--dir .wiretype]
 wiretype ui      [--dir .wiretype] [--port 5099]
 ```
@@ -138,7 +149,7 @@ wiretypeRecorder({
   prefixes: ['/api'],              // paths to intercept + record (required)
   name: 'dev-session',             // recording name (default "vite")
   dir: '.wiretype',                // store directory
-  enabled: true,                   // master switch
+  enabled: true,                   // override auto-detect (default: mode "record" or WIRETYPE env)
   excludePrefixes: ['/api/noisy'], // proxied but not recorded
   maxBodyBytes: 1_048_576,         // capture cap (bodies beyond are truncated)
   redactHeaders: ['authorization'],// default: authorization, cookie, set-cookie, x-api-key
@@ -183,7 +194,14 @@ Gate it in CI:
 # record against the new deploy, then:
 wiretype gen --targets model --out baseline-check
 wiretype diff baseline/model.json baseline-check/model.json --fail-on breaking
+
+# Markdown report for PR comments, localized (en|ko):
+wiretype diff baseline/model.json baseline-check/model.json --md --lang ko
 ```
+
+`--md` prints a Markdown report (summary + one findings table per severity);
+`--lang` localizes the headings and labels while machine fields (endpoints,
+paths, `before → after` types) stay untranslated. `--json` is never localized.
 
 The full rule set (nullability, optionality, enum widening, format loss,
 status changes, ...) is deterministic and documented in
