@@ -220,8 +220,14 @@ deterministic.
 ```bash
 claude plugin marketplace add ehdrms785/wiretype
 claude plugin install wiretype
-# then: "run an API drift audit against the dev recording"
 ```
+
+The skills trigger from natural language ("audit src/apis against the real API",
+"refresh my MSW mocks from real traffic"), or you can invoke the slash commands
+explicitly:
+
+- `/wiretype-audit [folder]` — drift-audit code types/zod/mocks vs real traffic
+- `/wiretype-msw` — reconcile MSW mock data with freshly recorded responses
 
 ## How is this different from…
 

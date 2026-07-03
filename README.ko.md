@@ -166,8 +166,13 @@ wiretype diff baseline/model.json baseline-check/model.json --md --lang ko
 ```bash
 claude plugin marketplace add ehdrms785/wiretype
 claude plugin install wiretype
-# 이후: "dev 녹화 기준으로 API drift 감사 돌려줘"
 ```
+
+스킬은 자연어로 발동하고("src/apis 실서버랑 타입 맞는지 감사해줘",
+"MSW mock 실서버 응답으로 갱신해줘"), 슬래시 커맨드로도 명시적으로 부를 수 있습니다:
+
+- `/wiretype-audit [폴더]` — 코드 타입/zod/mock을 실 트래픽과 대조 감사
+- `/wiretype-msw` — MSW mock 데이터를 최신 녹화 응답과 리컨실
 
 ## 기존 도구와의 차이
 
