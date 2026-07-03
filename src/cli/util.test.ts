@@ -5,6 +5,10 @@ describe('parseTargets', () => {
   it('parses a comma-separated list', () => {
     expect(parseTargets('ts,zod,msw,openapi')).toEqual(['ts', 'zod', 'msw', 'openapi']);
   });
+  it('accepts the model target', () => {
+    expect(parseTargets('model')).toEqual(['model']);
+    expect(parseTargets('ts,model')).toEqual(['ts', 'model']);
+  });
   it('trims whitespace and dedupes', () => {
     expect(parseTargets(' ts , zod , ts ')).toEqual(['ts', 'zod']);
   });

@@ -22,6 +22,7 @@ wiretype-generated/
   schemas.ts    zod schemas + z.infer type aliases
   handlers.ts   MSW v2 handlers seeded with real captured responses
   openapi.json  OpenAPI 3.1 spec
+  model.json    the raw observed model — input for `wiretype diff` (drift detection)
 ```
 
 ## Quickstart
@@ -120,7 +121,9 @@ export const handlers = [
 wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
-                 [--targets ts,zod,msw,openapi]
+                 [--targets ts,zod,msw,openapi,model]
+wiretype diff    <a> <b> [--dir .wiretype] [--json] [--fail-on breaking|risky|info]
+                 [--ignore-unmatched]
 wiretype list    [--dir .wiretype]
 wiretype ui      [--dir .wiretype] [--port 5099]
 ```
@@ -147,6 +150,60 @@ wiretypeRecorder({
 1. **Record** — a zero-dependency reverse proxy (Node built-ins only) streams traffic through untouched, capturing method, path, query, headers (sensitive ones redacted), and JSON bodies. Gzip/brotli responses are forwarded raw and decoded only for capture.
 2. **Infer** — paths are normalized into patterns, then every JSON body per endpoint per status is merged into a shape AST: unions, optionals, nullability, formats, and enums fall out of the merge rules.
 3. **Generate** — four emitters render the same model into TypeScript, zod, MSW, and OpenAPI. Output is deterministic and compiles under `tsc --strict`.
+
+## Schema drift detection
+
+Recording once gives you types. Recording *twice* gives you a contract test.
+`wiretype diff` compares two observed models (or a model against a committed
+baseline) and grades every change:
+
+```
+$ wiretype diff v1 v2
+wiretype diff — a: v1 (1 endpoints) vs b: v2 (2 endpoints)
+  1 breaking, 2 risky, 3 info · 1 compared, 0 only-in-a, 1 only-in-b
+
+BREAKING (1)
+breaking | field-removed       | GET /api/items/:itemId | [200] name   | string → -
+
+RISKY (2)
+risky    | format-changed      | GET /api/items/:itemId | [200] sku    | string (uuid) → string
+risky    | enum-values-changed | GET /api/items/:itemId | [200] status | "active" | "archived" → "active" | "archived" | "draft"
+
+INFO (3)
+info     | type-changed        | GET /api/items/:itemId | [200] price  | number (integer) → number
+...
+```
+
+Semantics: side `a` is what consumers believe (an older recording, a committed
+baseline, or a claims model extracted from your source), side `b` is observed
+reality — **breaking** means code written against `a` breaks under `b`.
+Gate it in CI:
+
+```bash
+# record against the new deploy, then:
+wiretype gen --targets model --out baseline-check
+wiretype diff baseline/model.json baseline-check/model.json --fail-on breaking
+```
+
+The full rule set (nullability, optionality, enum widening, format loss,
+status changes, ...) is deterministic and documented in
+[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
+## Claude agent plugin
+
+The repo ships a Claude Code / Cowork plugin ([`claude-plugin/`](./claude-plugin))
+with an **api-drift-audit** skill: the agent finds your API call sites, extracts
+what your hand-written types and zod schemas *believe*, converts that into a
+claims model, and lets `wiretype diff` deliver the verdict — then maps every
+breaking/risky finding to file:line and offers to fix types, refresh MSW mocks,
+or add zod guards. The agent discovers and explains; the judgment stays
+deterministic.
+
+```bash
+claude plugin marketplace add ehdrms785/wiretype
+claude plugin install wiretype
+# then: "run an API drift audit against the dev recording"
+```
 
 ## How is this different from…
 

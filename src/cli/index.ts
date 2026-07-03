@@ -4,6 +4,7 @@ import { runRecord } from './cmd-record.js';
 import { runGen } from './cmd-gen.js';
 import { runList } from './cmd-list.js';
 import { runUi } from './cmd-ui.js';
+import { runDiff } from './cmd-diff.js';
 
 function fail(err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
@@ -41,10 +42,27 @@ program
   .option('--name <recording>', 'recording name', 'session')
   .option('--dir <dir>', 'store directory', '.wiretype')
   .option('--out <dir>', 'output directory', 'wiretype-generated')
-  .option('--targets <targets>', 'comma-separated targets', 'ts,zod,msw,openapi')
+  .option('--targets <targets>', 'comma-separated targets (ts,zod,msw,openapi,model)', 'ts,zod,msw,openapi,model')
   .action(async (opts) => {
     try {
       await runGen(opts);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command('diff')
+  .description('Compare two models/recordings and report schema drift (a → b).')
+  .argument('<a>', 'baseline: model.json path or recording name (what consumers believe)')
+  .argument('<b>', 'observed: model.json path or recording name (observed reality)')
+  .option('--dir <dir>', 'store directory', '.wiretype')
+  .option('--json', 'print the DriftReport as JSON')
+  .option('--fail-on <level>', 'exit 1 when a finding at this level or higher exists (breaking|risky|info)')
+  .option('--ignore-unmatched', 'ignore endpoints only present on one side')
+  .action(async (a: string, b: string, opts) => {
+    try {
+      await runDiff({ a, b, ...opts });
     } catch (err) {
       fail(err);
     }

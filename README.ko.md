@@ -22,6 +22,7 @@ wiretype-generated/
   schemas.ts    zod 스키마 + z.infer 타입
   handlers.ts   실제 캡처 응답이 mock 데이터인 MSW v2 핸들러
   openapi.json  OpenAPI 3.1 스펙
+  model.json    관측 원본 모델 — `wiretype diff`(드리프트 감지)의 입력
 ```
 
 ## 빠른 시작
@@ -87,7 +88,9 @@ enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, 
 wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
-                 [--targets ts,zod,msw,openapi]
+                 [--targets ts,zod,msw,openapi,model]
+wiretype diff    <a> <b> [--dir .wiretype] [--json] [--fail-on breaking|risky|info]
+                 [--ignore-unmatched]
 wiretype list    [--dir .wiretype]
 wiretype ui      [--dir .wiretype] [--port 5099]
 ```
@@ -99,6 +102,53 @@ wiretype ui      [--dir .wiretype] [--port 5099]
 1. **녹화** — Node 내장 모듈만 쓰는 zero-dependency 리버스 프록시가 트래픽을 그대로 통과시키며 method/path/query/헤더(민감 헤더 redact)/JSON 바디를 캡처합니다. gzip/brotli 응답은 원본 그대로 전달하고 캡처용으로만 디코딩합니다.
 2. **추론** — 경로를 패턴으로 정규화하고, 엔드포인트×상태코드별 JSON 바디를 shape AST로 병합합니다. 유니온·optional·nullable·포맷·enum이 병합 규칙에서 자연스럽게 도출됩니다.
 3. **생성** — 같은 모델을 4개 이미터가 TypeScript/zod/MSW/OpenAPI로 렌더링합니다. 출력은 결정론적이고 `tsc --strict`로 컴파일됩니다.
+
+## 스키마 드리프트 감지
+
+한 번 녹화하면 타입이 나오고, *두 번* 녹화하면 계약 테스트가 됩니다.
+`wiretype diff`는 두 관측 모델(또는 커밋된 베이스라인)을 비교해서 모든 변경에
+심각도를 매깁니다:
+
+```
+$ wiretype diff v1 v2
+wiretype diff — a: v1 (1 endpoints) vs b: v2 (2 endpoints)
+  1 breaking, 2 risky, 3 info · 1 compared, 0 only-in-a, 1 only-in-b
+
+BREAKING (1)
+breaking | field-removed       | GET /api/items/:itemId | [200] name   | string → -
+
+RISKY (2)
+risky    | format-changed      | GET /api/items/:itemId | [200] sku    | string (uuid) → string
+risky    | enum-values-changed | GET /api/items/:itemId | [200] status | "active" | "archived" → "active" | "archived" | "draft"
+...
+```
+
+의미: `a`는 소비자가 믿고 있는 것(이전 녹화, 베이스라인, 소스 코드에서 추출한
+claim), `b`는 관측된 현실 — **breaking**은 `a` 기준으로 짠 코드가 `b`에서
+깨진다는 뜻입니다. CI 게이트로:
+
+```bash
+wiretype gen --targets model --out baseline-check
+wiretype diff baseline/model.json baseline-check/model.json --fail-on breaking
+```
+
+전체 판정 규칙(nullable화, optional화, enum 확장, 포맷 소실, 상태코드 변화 등)은
+결정론적이며 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)에 문서화되어 있습니다.
+
+## Claude 에이전트 플러그인
+
+레포에 Claude Code / Cowork 플러그인([`claude-plugin/`](./claude-plugin))이
+포함되어 있습니다. **api-drift-audit** 스킬은: 에이전트가 API 콜사이트를 찾고,
+수제 타입/zod 스키마가 *믿고 있는* 구조를 claims 모델로 변환한 뒤, 판정은
+`wiretype diff`에 맡깁니다 — 그리고 breaking/risky 발견을 file:line에 매핑해서
+타입 수정, MSW mock 갱신, zod 가드 추가까지 제안합니다. 탐색과 설명은
+에이전트가, 판정은 결정론 엔진이.
+
+```bash
+claude plugin marketplace add ehdrms785/wiretype
+claude plugin install wiretype
+# 이후: "dev 녹화 기준으로 API drift 감사 돌려줘"
+```
 
 ## 기존 도구와의 차이
 

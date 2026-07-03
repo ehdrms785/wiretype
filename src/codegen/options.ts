@@ -15,4 +15,4 @@ export interface GeneratedFile {
 }
 
 /** Codegen targets. */
-export type CodegenTarget = 'ts' | 'zod' | 'msw' | 'openapi';
+export type CodegenTarget = 'ts' | 'zod' | 'msw' | 'openapi' | 'model';

@@ -1,8 +1,8 @@
 /** Pure helpers for the CLI, unit-tested independently of wiretype core. */
 
-export type Target = 'ts' | 'zod' | 'msw' | 'openapi';
+export type Target = 'ts' | 'zod' | 'msw' | 'openapi' | 'model';
 
-const VALID_TARGETS: readonly Target[] = ['ts', 'zod', 'msw', 'openapi'];
+const VALID_TARGETS: readonly Target[] = ['ts', 'zod', 'msw', 'openapi', 'model'];
 
 /** Parse a comma-separated --targets string into a validated Target[]. */
 export function parseTargets(raw: string): Target[] {

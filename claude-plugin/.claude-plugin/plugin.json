@@ -1,0 +1,13 @@
+{
+  "name": "wiretype",
+  "displayName": "wiretype — API drift audit",
+  "version": "0.1.0",
+  "description": "Audit your codebase against reality: compare what your code believes about API responses with what the wire actually returned, using wiretype recordings and its deterministic drift engine. Finds breaking mismatches, stale types, and drifted MSW mocks — then reports or fixes them.",
+  "author": {
+    "name": "daro",
+    "url": "https://github.com/ehdrms785"
+  },
+  "homepage": "https://github.com/ehdrms785/wiretype",
+  "license": "MIT",
+  "keywords": ["api", "typescript", "drift", "zod", "msw", "openapi", "wiretype"]
+}

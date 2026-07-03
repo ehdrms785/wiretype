@@ -19,11 +19,11 @@ export { renderShapeAsZod, generateZod } from './emit-zod.js';
 export { generateMsw } from './emit-msw.js';
 export { generateOpenApi, shapeToJsonSchema } from './emit-openapi.js';
 
-const ALL_TARGETS: CodegenTarget[] = ['ts', 'zod', 'msw', 'openapi'];
+export const ALL_TARGETS: CodegenTarget[] = ['ts', 'zod', 'msw', 'openapi', 'model'];
 
 /**
  * Generate all (or a subset of) targets as an ordered list of files.
- * paths: `types.ts`, `schemas.ts`, `handlers.ts`, `openapi.json`.
+ * paths: `types.ts`, `schemas.ts`, `handlers.ts`, `openapi.json`, `model.json`.
  */
 export function generateAll(
   model: ApiModel,
@@ -51,6 +51,11 @@ export function generateAll(
         files.push({ path: 'openapi.json', content: `${JSON.stringify(withBanner, null, 2)}\n` });
         break;
       }
+      case 'model':
+        // Raw ApiModel, pretty-printed. Doubles as the claims interchange
+        // format consumed by `wiretype diff`.
+        files.push({ path: 'model.json', content: `${JSON.stringify(model, null, 2)}\n` });
+        break;
     }
   }
   return files;

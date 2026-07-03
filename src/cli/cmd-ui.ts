@@ -206,5 +206,7 @@ function renderTarget(
       return generateMsw(model);
     case 'openapi':
       return JSON.stringify(generateOpenApi(model), null, 2);
+    case 'model':
+      return JSON.stringify(model, null, 2);
   }
 }

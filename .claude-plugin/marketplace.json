@@ -1,0 +1,14 @@
+{
+  "name": "wiretype",
+  "owner": {
+    "name": "daro",
+    "url": "https://github.com/ehdrms785"
+  },
+  "plugins": [
+    {
+      "name": "wiretype",
+      "source": "./claude-plugin",
+      "description": "API drift audit — compare what your code believes about API responses with what the wire actually returned. Deterministic verdicts via wiretype diff; agent-powered call-site discovery, reporting, and fixes."
+    }
+  ]
+}

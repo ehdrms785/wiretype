@@ -305,6 +305,85 @@ realistic data — enough variety to exercise ALL inference features:
 `traffic.mjs` fires a scripted set of requests against the recording proxy to
 drive an end-to-end capture.
 
+## Drift — deterministic schema drift detection (`src/drift`)
+
+Shared types live in `src/drift/types.ts` (read first — it defines the
+semantics: side "a" = what consumers believe, side "b" = observed reality,
+BREAKING = code written against "a" breaks under "b").
+
+```ts
+export * from './types.js';
+
+/** Compare two models endpoint-by-endpoint. Deterministic, pure. */
+export function diffModels(a: ApiModel, b: ApiModel, opts?: DiffOptions): DriftReport;
+
+/**
+ * Compare two shapes, reporting findings rooted at basePath.
+ * Exposed so agent tooling can compare a single claimed shape against an
+ * observed one without building full models.
+ */
+export function diffShapes(
+  a: Shape | null,
+  b: Shape | null,
+  ctx: { endpoint: string; status?: number; basePath?: string },
+): DriftFinding[];
+```
+
+### Normative severity rules (diff from a → b)
+
+Endpoint level: endpoint in a but not b → `endpoint-removed` / breaking;
+in b but not a → `endpoint-added` / info (both suppressed by
+`ignoreUnmatchedEndpoints`). Response status in a but not b →
+`status-removed` / risky; new status in b → `status-added` / risky.
+
+Shape level (recursive walk; null variants handled as nullability):
+
+- field present in a, absent in b → `field-removed` / **breaking**
+- field present in b only → `field-added` / info
+- primitive type changed → `type-changed`; integer→number widening is info,
+  number→integer is info, anything else **breaking**
+- became nullable (b allows null, a didn't) → `nullability-changed` / **breaking**;
+  became non-nullable → `nullability-changed` / info
+- field became optional in b → `optionality-changed` / **risky**;
+  became required → `optionality-changed` / info
+- enum: values added in b → `enum-values-changed` / **risky** (unhandled cases);
+  values removed → `enum-values-changed` / info; enum in a but plain primitive
+  in b → treat as risky `enum-values-changed` (closed set became open)
+- format lost or changed (uuid → none/other) → `format-changed` / risky;
+  format gained → info
+- array element / record value / nested object: recurse with path suffixes
+  `[]`, `{}` (record), `.field`
+- kind mismatch not covered above (object→array etc.) → `type-changed` / **breaking**
+- `unknown` in a vs anything in b → info (a knew nothing); concrete in a vs
+  `unknown` in b → risky
+- request body / query drift: same shape rules; when the whole shape
+  appears/disappears use endpoint-level `request-changed` / `query-changed`
+  (request required in b but absent in a → breaking; removed → info)
+- `params-changed` only for param format changes (integer→uuid etc.) → risky
+
+Report ordering: breaking, risky, info; within a group by endpoint then path.
+Everything deterministic — this is a CI gate.
+
+### CLI
+
+```
+wiretype diff <a> <b> [--dir .wiretype] [--json] [--fail-on breaking|risky|info]
+              [--ignore-unmatched]
+```
+
+`<a>`/`<b>` resolve in order: (1) a path to a model.json file (an ApiModel),
+(2) a recording name in --dir (model built on the fly via buildApiModel).
+Human output: summary line + severity-grouped table
+(SEVERITY | KIND | ENDPOINT | PATH | A → B). `--json` prints the DriftReport
+JSON instead. `--fail-on <level>` exits 1 when any finding at that severity
+or higher exists (breaking > risky > info) — the CI gate.
+
+`wiretype gen` additionally accepts target `model` (allowed in --targets and
+included in the default set) writing `model.json` — the raw ApiModel,
+pretty-printed. model.json doubles as the claims interchange format: agent
+tooling that extracts "what the code believes" emits a partial ApiModel and
+diffs it against an observed model with --ignore-unmatched.
+
 ## Quality bar
 
 - `npm run build` clean, `npm test` green, no `any` leaks in public APIs.

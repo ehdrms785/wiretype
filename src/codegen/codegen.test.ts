@@ -392,14 +392,29 @@ describe('generateOpenApi', () => {
 });
 
 describe('generateAll', () => {
-  it('emits the four files with expected paths', () => {
+  it('emits all default target files with expected paths', () => {
     const files = generateAll(fixtureModel);
     expect(files.map((f) => f.path)).toEqual([
       'types.ts',
       'schemas.ts',
       'handlers.ts',
       'openapi.json',
+      'model.json',
     ]);
+  });
+
+  it('model target round-trips: JSON.parse(content) deep-equals model', () => {
+    const files = generateAll(fixtureModel, ['model']);
+    expect(files).toHaveLength(1);
+    expect(files[0]!.path).toBe('model.json');
+    expect(JSON.parse(files[0]!.content)).toEqual(fixtureModel);
+    // trailing newline
+    expect(files[0]!.content.endsWith('\n')).toBe(true);
+  });
+
+  it('model appears in the default target output', () => {
+    const files = generateAll(fixtureModel);
+    expect(files.some((f) => f.path === 'model.json')).toBe(true);
   });
 
   it('openapi.json is valid JSON and carries the banner', () => {
