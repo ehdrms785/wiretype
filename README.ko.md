@@ -25,6 +25,18 @@ wiretype-generated/
   model.json    관측 원본 모델 — `wiretype diff`(드리프트 감지)의 입력
 ```
 
+![wiretype demo — 녹화, 생성, 드리프트 감지](https://raw.githubusercontent.com/ehdrms785/wiretype/main/docs/assets/demo.gif)
+
+## 30초 체험
+
+```bash
+npx wiretype demo
+```
+
+설정도, 세팅도 필요 없고, 아무것도 외부로 나가지 않습니다. 로컬 데모 API를 띄우고,
+프록시로 실제 트래픽을 녹화해 5종 산출물을 생성한 뒤 — "6개월 후" 백엔드가 조용히
+바뀌고, `wiretype diff`가 모든 breaking 변경을 잡아냅니다. 전체 루프를 명령 하나로.
+
 ## 빠른 시작
 
 ```bash
@@ -97,6 +109,7 @@ enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, 
 ## CLI
 
 ```
+wiretype demo    [--dir .wiretype] [--out wiretype-demo]
 wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]

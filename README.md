@@ -25,6 +25,19 @@ wiretype-generated/
   model.json    the raw observed model — input for `wiretype diff` (drift detection)
 ```
 
+![wiretype demo — record, generate, catch drift](https://raw.githubusercontent.com/ehdrms785/wiretype/main/docs/assets/demo.gif)
+
+## Try it in 30 seconds
+
+```bash
+npx wiretype demo
+```
+
+No setup, no config, nothing leaves your machine. It spins up a local demo API,
+records real traffic through the proxy, generates all five outputs — then
+"six months later" the backend quietly changes, and `wiretype diff` catches
+every breaking change. The whole loop, one command.
+
 ## Quickstart
 
 ```bash
@@ -129,6 +142,7 @@ handler code. (JSON imports may need `resolveJsonModule: true` in your tsconfig.
 ## CLI
 
 ```
+wiretype demo    [--dir .wiretype] [--out wiretype-demo]
 wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]

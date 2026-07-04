@@ -218,6 +218,15 @@ Never crash on upstream errors: respond 502 and call onError. WebSocket
 upgrade requests: pass through without recording (or reject cleanly) — must
 not crash.
 
+Capture bounding (normative, applies to the proxy AND the vite plugin):
+request bodies are STREAMED to upstream in full — a capture cap must never
+truncate the forwarded bytes. Capture copies (request and response) are
+collected via `CappedBuffer` (exported from `src/proxy`): it keeps at most
+`maxBodyBytes` plus the single chunk crossing the cap (so truncation stays
+detectable via `buffer().length > cap`) and drops everything after — SSE and
+other long-lived streams pass through untouched with bounded memory. Paths
+failing `shouldRecord` are never buffered at all.
+
 ## CLI — commands (`src/cli`)
 
 Binary name: `wiretype` (package.json `bin`). Uses `commander`.
@@ -236,6 +245,18 @@ wiretype gen     [--name <recording>] [--dir .wiretype] [--out wiretype-generate
 
 wiretype list    [--dir .wiretype]
       Table of recordings (name, target, exchanges, updated).
+
+wiretype demo    [--dir .wiretype] [--out wiretype-demo]
+      Self-contained 30-second tour, zero setup: starts an in-process demo
+      API (v1) + recording proxy, fires scripted traffic, runs gen (all five
+      targets, endpoint summary + a types.ts excerpt), then restarts the API
+      with a drifted schema (v2: string→number, field removed, enum widened,
+      field added), re-records, and prints the deterministic drift verdict
+      (diffModels with ignoreUnmatchedEndpoints). Recordings land in
+      <dir>/demo-v1 and <dir>/demo-v2 so `wiretype ui` works afterwards;
+      reruns are idempotent (recordings are reset, not appended). The demo
+      API lives in src/cli/cmd-demo.ts (examples/ is not shipped to npm).
+      Colors honor FORCE_COLOR / NO_COLOR.
 
 wiretype ui      [--dir .wiretype] [--port 5099]
       Serves the viewer (single HTML file at <package root>/viewer/index.html,

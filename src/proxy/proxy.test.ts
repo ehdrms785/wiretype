@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Exchange } from '../core/index.js';
 import { startProxy } from './proxy.js';
 import type { RunningProxy } from './proxy.js';
-import { buildExchange, shouldRecord } from './capture.js';
+import { buildExchange, CappedBuffer, shouldRecord } from './capture.js';
 
 /** Start an in-process upstream with fixed routes. Returns base URL + close. */
 function startUpstream(): Promise<{ url: string; close: () => Promise<void> }> {
@@ -28,6 +28,26 @@ function startUpstream(): Promise<{ url: string; close: () => Promise<void> }> {
         'content-encoding': 'gzip',
       });
       res.end(gz);
+      return;
+    }
+
+    if (path === '/api/upload' && req.method === 'POST') {
+      let receivedBytes = 0;
+      req.on('data', (c: Buffer) => {
+        receivedBytes += c.length;
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ receivedBytes }));
+      });
+      return;
+    }
+
+    if (path === '/api/stream' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      const chunk = 'y'.repeat(8 * 1024);
+      for (let i = 0; i < 64; i += 1) res.write(chunk); // 512 KiB total
+      res.end();
       return;
     }
 
@@ -68,6 +88,33 @@ describe('shouldRecord', () => {
   it('applies exclude prefixes', () => {
     expect(shouldRecord('/api/health', { excludePrefixes: ['/api/health'] })).toBe(false);
     expect(shouldRecord('/api/users', { excludePrefixes: ['/api/health'] })).toBe(true);
+  });
+});
+
+describe('CappedBuffer', () => {
+  it('keeps everything under the cap', () => {
+    const cb = new CappedBuffer(10);
+    cb.push(Buffer.from('12345'));
+    cb.push(Buffer.from('67890'));
+    expect(cb.buffer().toString()).toBe('1234567890');
+  });
+
+  it('keeps the chunk crossing the cap (truncation detectable) then drops', () => {
+    const cb = new CappedBuffer(10);
+    cb.push(Buffer.from('123456789')); // 9 <= cap: kept
+    cb.push(Buffer.from('abcdef')); // crosses cap: kept (length now > cap)
+    cb.push(Buffer.from('DROPPED')); // past cap: dropped
+    cb.push(Buffer.from('DROPPED'));
+    const buf = cb.buffer();
+    expect(buf.toString()).toBe('123456789abcdef');
+    expect(buf.length).toBeGreaterThan(10); // consumers detect truncation
+  });
+
+  it('memory stays bounded across many pushes', () => {
+    const cb = new CappedBuffer(1024);
+    const chunk = Buffer.alloc(512, 1);
+    for (let i = 0; i < 10_000; i += 1) cb.push(chunk);
+    expect(cb.buffer().length).toBeLessThanOrEqual(1024 + 512);
   });
 });
 
@@ -236,6 +283,56 @@ describe('startProxy', () => {
     expect(res.status).toBe(200); // still proxied
     await new Promise((r) => setTimeout(r, 50));
     expect(captured).toHaveLength(0); // but not recorded
+  });
+
+  it('forwards large request bodies intact while capturing a truncated copy', async () => {
+    upstream = await startUpstream();
+    const captured: Exchange[] = [];
+    proxy = await startProxy({
+      target: upstream.url,
+      port: 0,
+      maxBodyBytes: 1024,
+      onExchange: (ex) => captured.push(ex),
+    });
+
+    const bigBody = 'x'.repeat(300 * 1024); // 300 KiB, far past the 1 KiB cap
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/api/upload`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: bigBody,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Upstream must receive EVERY byte — capture caps must never truncate
+    // the forwarded body.
+    expect(body).toEqual({ receivedBytes: bigBody.length });
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(captured).toHaveLength(1);
+    const reqText = captured[0]!.request.bodyText ?? '';
+    expect(reqText.length).toBeLessThanOrEqual(1024);
+  });
+
+  it('caps the captured copy of large streamed responses', async () => {
+    upstream = await startUpstream();
+    const captured: Exchange[] = [];
+    proxy = await startProxy({
+      target: upstream.url,
+      port: 0,
+      maxBodyBytes: 1024,
+      onExchange: (ex) => captured.push(ex),
+    });
+
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/api/stream`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    // Client still receives the full stream.
+    expect(text.length).toBe(512 * 1024);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(captured).toHaveLength(1);
+    const resText = captured[0]!.response.bodyText ?? '';
+    expect(resText.length).toBeLessThanOrEqual(1024);
   });
 
   it('returns 502 on dead upstream', async () => {

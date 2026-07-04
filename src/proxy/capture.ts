@@ -157,6 +157,30 @@ export function buildExchange(input: {
   };
 }
 
+/**
+ * Bounded body collector shared by the proxy and the vite plugin. Keeps at
+ * most `cap` bytes plus the single chunk that crosses the cap (so consumers
+ * can detect truncation via `buffer().length > cap`), then drops everything
+ * after — long-lived streams (SSE, large downloads) never grow memory
+ * unboundedly while being passed through.
+ */
+export class CappedBuffer {
+  private readonly chunks: Buffer[] = [];
+  private total = 0;
+
+  constructor(private readonly cap: number) {}
+
+  push(chunk: Buffer): void {
+    const before = this.total;
+    this.total += chunk.length;
+    if (before <= this.cap) this.chunks.push(chunk);
+  }
+
+  buffer(): Buffer {
+    return Buffer.concat(this.chunks);
+  }
+}
+
 /** true when path passes include/exclude prefix filters. */
 export function shouldRecord(path: string, opts?: RecorderOptions): boolean {
   const include = opts?.includePrefixes;

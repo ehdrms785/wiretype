@@ -11,7 +11,12 @@ import {
 import type { Plugin, ResolvedConfig, ViteDevServer, Connect } from 'vite';
 import type { Exchange, RecorderOptions } from '../core/index.js';
 import { RecordingStore } from '../core/index.js';
-import { buildExchange, shouldRecord } from '../proxy/index.js';
+import {
+  buildExchange,
+  CappedBuffer,
+  DEFAULT_MAX_BODY_BYTES,
+  shouldRecord,
+} from '../proxy/index.js';
 
 export interface WiretypePluginOptions extends RecorderOptions {
   /** Upstream API base URL, e.g. "http://localhost:8080". */
@@ -89,15 +94,6 @@ function decodeEncoded(body: Buffer, encoding: string | undefined): Buffer {
   return body;
 }
 
-function collectRequestBody(req: IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
 function resolveTarget(target: string, reqUrl: string): URL {
   const base = new URL(target);
   const incoming = new URL(reqUrl, 'http://placeholder');
@@ -117,6 +113,7 @@ export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin
     maxBodyBytes: options.maxBodyBytes,
     redactHeaders: options.redactHeaders,
   };
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
   let store: RecordingStore | undefined;
   let initialized: Promise<void> | undefined;
@@ -156,72 +153,81 @@ export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin
     const forwardHeaders = stripHopByHop(req.headers);
     forwardHeaders['host'] = resolved.host;
 
-    collectRequestBody(req)
-      .then((reqBody) => {
-        const upstreamReq = transport.request(
-          {
-            protocol: resolved.protocol,
-            hostname: resolved.hostname,
-            port: resolved.port || (isHttps ? 443 : 80),
-            method,
-            path: resolved.pathname + resolved.search,
-            headers: forwardHeaders,
-          },
-          (upstreamRes: IncomingMessage) => {
-            const status = upstreamRes.statusCode ?? 502;
-            const resHeaders = stripHopByHop(upstreamRes.headers);
-            res.writeHead(status, resHeaders);
+    const willRecord = shouldRecord(path, recorderOpts);
 
-            const captureChunks: Buffer[] = [];
-            upstreamRes.on('data', (chunk: Buffer) => {
-              res.write(chunk);
-              captureChunks.push(chunk);
-            });
-            upstreamRes.on('end', () => {
-              res.end();
-              const endedAt = Date.now();
+    // Capture a bounded copy of the request body while STREAMING the full
+    // body to upstream — never forward a truncated body.
+    const reqCapture = new CappedBuffer(maxBodyBytes);
 
-              if (!shouldRecord(path, recorderOpts)) return;
+    const upstreamReq = transport.request(
+      {
+        protocol: resolved.protocol,
+        hostname: resolved.hostname,
+        port: resolved.port || (isHttps ? 443 : 80),
+        method,
+        path: resolved.pathname + resolved.search,
+        headers: forwardHeaders,
+      },
+      (upstreamRes: IncomingMessage) => {
+        const status = upstreamRes.statusCode ?? 502;
+        const resHeaders = stripHopByHop(upstreamRes.headers);
+        res.writeHead(status, resHeaders);
 
-              const rawBody: Buffer = Buffer.concat(captureChunks);
-              const encoding = upstreamRes.headers['content-encoding'];
-              const encStr = Array.isArray(encoding) ? encoding[0] : encoding;
-              const capturedBody: Buffer = decodeEncoded(rawBody, encStr);
+        // Bounded capture: long-lived streams (SSE, large downloads) pass
+        // through untouched but never grow the capture buffer past the cap.
+        const resCapture = new CappedBuffer(maxBodyBytes);
 
-              const captureResHeaders: Record<string, string | string[] | undefined> = {
-                ...upstreamRes.headers,
-              };
-              delete captureResHeaders['content-encoding'];
-              delete captureResHeaders['content-length'];
-
-              void record({
-                method,
-                url: rawUrl,
-                reqHeaders: req.headers,
-                reqBody,
-                status,
-                resHeaders: captureResHeaders,
-                resBody: capturedBody,
-                startedAt,
-                endedAt,
-              });
-            });
-            upstreamRes.on('error', () => {
-              if (!res.writableEnded) res.end();
-            });
-          },
-        );
-
-        upstreamReq.on('error', (err: Error) => {
-          send502(res, err.message);
+        upstreamRes.on('data', (chunk: Buffer) => {
+          res.write(chunk);
+          if (willRecord) resCapture.push(chunk);
         });
+        upstreamRes.on('end', () => {
+          res.end();
+          const endedAt = Date.now();
 
-        if (reqBody.length > 0) upstreamReq.write(reqBody);
-        upstreamReq.end();
-      })
-      .catch(() => {
-        send502(res, 'failed to read request body');
-      });
+          if (!willRecord) return;
+
+          const rawBody: Buffer = resCapture.buffer();
+          const encoding = upstreamRes.headers['content-encoding'];
+          const encStr = Array.isArray(encoding) ? encoding[0] : encoding;
+          const capturedBody: Buffer = decodeEncoded(rawBody, encStr);
+
+          const captureResHeaders: Record<string, string | string[] | undefined> = {
+            ...upstreamRes.headers,
+          };
+          delete captureResHeaders['content-encoding'];
+          delete captureResHeaders['content-length'];
+
+          void record({
+            method,
+            url: rawUrl,
+            reqHeaders: req.headers,
+            reqBody: reqCapture.buffer(),
+            status,
+            resHeaders: captureResHeaders,
+            resBody: capturedBody,
+            startedAt,
+            endedAt,
+          });
+        });
+        upstreamRes.on('error', () => {
+          if (!res.writableEnded) res.end();
+        });
+      },
+    );
+
+    upstreamReq.on('error', (err: Error) => {
+      send502(res, err.message);
+    });
+
+    req.on('error', () => {
+      upstreamReq.destroy();
+    });
+
+    if (willRecord) {
+      req.on('data', (chunk: Buffer) => reqCapture.push(chunk));
+    }
+    req.pipe(upstreamReq);
   };
 
   const record = async (input: {

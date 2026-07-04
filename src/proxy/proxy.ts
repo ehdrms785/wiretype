@@ -10,7 +10,7 @@ import {
 } from 'node:zlib';
 import type { Socket } from 'node:net';
 import type { Exchange, RecorderOptions } from '../core/index.js';
-import { buildExchange, DEFAULT_MAX_BODY_BYTES, shouldRecord } from './capture.js';
+import { buildExchange, CappedBuffer, DEFAULT_MAX_BODY_BYTES, shouldRecord } from './capture.js';
 
 export interface ProxyServerOptions extends RecorderOptions {
   /** Upstream base URL. May include a path prefix. */
@@ -76,25 +76,6 @@ function decodeEncoded(body: Buffer, encoding: string | undefined): Buffer {
   return body;
 }
 
-function collectBody(stream: IncomingMessage, cap: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    stream.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      // Keep collecting a little past the cap so we know it was truncated,
-      // but avoid unbounded memory growth on huge bodies.
-      if (total <= cap + 1) {
-        chunks.push(chunk);
-      } else if (chunks.length === 0 || total - chunk.length <= cap) {
-        chunks.push(chunk);
-      }
-    });
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
-}
-
 /**
  * Join a target base URL (which may include a path prefix) with the incoming
  * request URL (path + query). Returns { url, host } components for the request.
@@ -157,108 +138,108 @@ export function startProxy(opts: ProxyServerOptions): Promise<RunningProxy> {
     const forwardHeaders = stripHopByHop(clientReq.headers);
     forwardHeaders['host'] = resolved.host;
 
-    collectBody(clientReq, maxBodyBytes)
-      .then((reqBody) => {
-        const upstreamReq = transport.request(
-          {
-            protocol: resolved.protocol,
-            hostname: resolved.hostname,
-            port: resolved.port || (isHttps ? 443 : 80),
-            method,
-            path: resolved.pathname + resolved.search,
-            headers: forwardHeaders,
-          },
-          (upstreamRes: IncomingMessage) => {
-            const status = upstreamRes.statusCode ?? 502;
-            const resHeaders = stripHopByHop(upstreamRes.headers);
+    const path = reqUrl.split('?')[0] ?? reqUrl;
+    const willRecord = shouldRecord(path, recorderOpts);
 
-            // Stream raw bytes back to the client byte-for-byte while
-            // buffering a copy for capture.
-            clientRes.writeHead(status, resHeaders);
+    // Capture a bounded copy of the request body while STREAMING the full
+    // body to upstream — never forward a truncated body.
+    const reqCapture = new CappedBuffer(maxBodyBytes);
 
-            const captureChunks: Buffer[] = [];
-            let captureTotal = 0;
+    const upstreamReq = transport.request(
+      {
+        protocol: resolved.protocol,
+        hostname: resolved.hostname,
+        port: resolved.port || (isHttps ? 443 : 80),
+        method,
+        path: resolved.pathname + resolved.search,
+        headers: forwardHeaders,
+      },
+      (upstreamRes: IncomingMessage) => {
+        const status = upstreamRes.statusCode ?? 502;
+        const resHeaders = stripHopByHop(upstreamRes.headers);
 
-            upstreamRes.on('data', (chunk: Buffer) => {
-              clientRes.write(chunk);
-              captureTotal += chunk.length;
-              if (captureTotal <= maxBodyBytes + 1) {
-                captureChunks.push(chunk);
-              } else if (captureTotal - chunk.length <= maxBodyBytes) {
-                captureChunks.push(chunk);
-              }
-            });
+        // Stream raw bytes back to the client byte-for-byte while
+        // buffering a bounded copy for capture.
+        clientRes.writeHead(status, resHeaders);
 
-            upstreamRes.on('end', () => {
-              clientRes.end();
-              const endedAt = Date.now();
+        const resCapture = new CappedBuffer(maxBodyBytes);
 
-              const path = reqUrl.split('?')[0] ?? reqUrl;
-              if (!quiet) {
-                process.stdout.write(
-                  `${method} ${path} ${status} ${endedAt - startedAt}ms\n`,
-                );
-              }
-
-              if (!shouldRecord(path, recorderOpts)) return;
-
-              // Decode a copy AFTER response completes, in try/catch.
-              const rawResBody: Buffer = Buffer.concat(captureChunks);
-              const encoding = upstreamRes.headers['content-encoding'];
-              const encStr = Array.isArray(encoding) ? encoding[0] : encoding;
-              let capturedResBody: Buffer = rawResBody;
-              try {
-                capturedResBody = decodeEncoded(rawResBody, encStr);
-              } catch (err) {
-                reportError(err);
-              }
-
-              // Present decoded headers to buildExchange (drop content-encoding
-              // so the captured text isn't mistaken for compressed bytes).
-              const captureResHeaders: Record<string, string | string[] | undefined> = {
-                ...upstreamRes.headers,
-              };
-              delete captureResHeaders['content-encoding'];
-              delete captureResHeaders['content-length'];
-
-              try {
-                const exchange = buildExchange({
-                  method,
-                  url: reqUrl,
-                  reqHeaders: clientReq.headers,
-                  reqBody,
-                  status,
-                  resHeaders: captureResHeaders,
-                  resBody: capturedResBody,
-                  startedAt,
-                  endedAt,
-                  opts: recorderOpts,
-                });
-                emitExchange(exchange);
-              } catch (err) {
-                reportError(err);
-              }
-            });
-
-            upstreamRes.on('error', (err) => {
-              reportError(err);
-              if (!clientRes.writableEnded) clientRes.end();
-            });
-          },
-        );
-
-        upstreamReq.on('error', (err) => {
-          reportError(err);
-          send502(clientRes, err.message);
+        upstreamRes.on('data', (chunk: Buffer) => {
+          clientRes.write(chunk);
+          if (willRecord) resCapture.push(chunk);
         });
 
-        if (reqBody.length > 0) upstreamReq.write(reqBody);
-        upstreamReq.end();
-      })
-      .catch((err) => {
-        reportError(err);
-        send502(clientRes, 'failed to read request body');
-      });
+        upstreamRes.on('end', () => {
+          clientRes.end();
+          const endedAt = Date.now();
+
+          if (!quiet) {
+            process.stdout.write(
+              `${method} ${path} ${status} ${endedAt - startedAt}ms\n`,
+            );
+          }
+
+          if (!willRecord) return;
+
+          // Decode a copy AFTER response completes, in try/catch.
+          const rawResBody: Buffer = resCapture.buffer();
+          const encoding = upstreamRes.headers['content-encoding'];
+          const encStr = Array.isArray(encoding) ? encoding[0] : encoding;
+          let capturedResBody: Buffer = rawResBody;
+          try {
+            capturedResBody = decodeEncoded(rawResBody, encStr);
+          } catch (err) {
+            reportError(err);
+          }
+
+          // Present decoded headers to buildExchange (drop content-encoding
+          // so the captured text isn't mistaken for compressed bytes).
+          const captureResHeaders: Record<string, string | string[] | undefined> = {
+            ...upstreamRes.headers,
+          };
+          delete captureResHeaders['content-encoding'];
+          delete captureResHeaders['content-length'];
+
+          try {
+            const exchange = buildExchange({
+              method,
+              url: reqUrl,
+              reqHeaders: clientReq.headers,
+              reqBody: reqCapture.buffer(),
+              status,
+              resHeaders: captureResHeaders,
+              resBody: capturedResBody,
+              startedAt,
+              endedAt,
+              opts: recorderOpts,
+            });
+            emitExchange(exchange);
+          } catch (err) {
+            reportError(err);
+          }
+        });
+
+        upstreamRes.on('error', (err) => {
+          reportError(err);
+          if (!clientRes.writableEnded) clientRes.end();
+        });
+      },
+    );
+
+    upstreamReq.on('error', (err) => {
+      reportError(err);
+      send502(clientRes, err.message);
+    });
+
+    clientReq.on('error', (err) => {
+      reportError(err);
+      upstreamReq.destroy(err);
+    });
+
+    if (willRecord) {
+      clientReq.on('data', (chunk: Buffer) => reqCapture.push(chunk));
+    }
+    clientReq.pipe(upstreamReq);
   };
 
   const server = http.createServer(handle);

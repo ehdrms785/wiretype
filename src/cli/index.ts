@@ -5,6 +5,7 @@ import { runGen } from './cmd-gen.js';
 import { runList } from './cmd-list.js';
 import { runUi } from './cmd-ui.js';
 import { runDiff } from './cmd-diff.js';
+import { runDemo } from './cmd-demo.js';
 
 function fail(err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
@@ -66,6 +67,22 @@ program
   .action(async (a: string, b: string, opts) => {
     try {
       await runDiff({ a, b, ...opts });
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command('demo')
+  .description(
+    'Self-contained 30-second tour: record a built-in demo API, generate types/zod/MSW/OpenAPI, then catch schema drift.',
+  )
+  .option('--dir <dir>', 'store directory', '.wiretype')
+  .option('--out <dir>', 'output directory', 'wiretype-demo')
+  .action(async (opts) => {
+    try {
+      await runDemo(opts);
+      process.exit(0);
     } catch (err) {
       fail(err);
     }

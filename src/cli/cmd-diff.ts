@@ -104,7 +104,8 @@ export async function runDiff(opts: DiffOptions): Promise<void> {
   }
 }
 
-function renderHuman(report: DriftReport): string {
+/** Plain-text drift report (summary + severity-grouped tables). Reused by `wiretype demo`. */
+export function renderHuman(report: DriftReport): string {
   const out: string[] = [];
 
   out.push(

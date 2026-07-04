@@ -3,6 +3,7 @@ export type { ProxyServerOptions, RunningProxy } from './proxy.js';
 export {
   buildExchange,
   shouldRecord,
+  CappedBuffer,
   normalizeHeaders,
   parseQuery,
   pathOnly,
