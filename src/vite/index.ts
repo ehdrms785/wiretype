@@ -17,12 +17,20 @@ import {
   DEFAULT_MAX_BODY_BYTES,
   shouldRecord,
 } from '../proxy/index.js';
+import { loadConfig } from '../config/index.js';
+import type { WiretypeConfig } from '../config/index.js';
 
 export interface WiretypePluginOptions extends RecorderOptions {
-  /** Upstream API base URL, e.g. "http://localhost:8080". */
-  target: string;
-  /** Path prefixes to intercept+forward, e.g. ["/api"]. Required. */
-  prefixes: string[];
+  /**
+   * Upstream API base URL, e.g. "http://localhost:8080".
+   * Optional when `target` is set in wiretype.config.{mjs,js,json}.
+   */
+  target?: string;
+  /**
+   * Path prefixes to intercept+forward, e.g. ["/api"].
+   * Optional when `prefixes` is set in wiretype.config.{mjs,js,json}.
+   */
+  prefixes?: string[];
   /** Recording name. Default "vite". */
   name?: string;
   /** Store directory. Default ".wiretype". */
@@ -101,37 +109,39 @@ function resolveTarget(target: string, reqUrl: string): URL {
   return new URL(basePath + incoming.pathname + incoming.search, base);
 }
 
-export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin {
-  // Recomputed in configResolved once the actual mode is known; the initial
-  // value only matters if the plugin is used outside a full Vite lifecycle.
+export default function wiretypeRecorder(options: WiretypePluginOptions = {}): Plugin {
+  // All of these may be overlaid by wiretype.config in configResolved
+  // (explicit plugin options always win; config fills the gaps).
   let enabled = resolveEnabled(options.enabled, '', !!process.env.WIRETYPE);
-  const name = options.name ?? 'vite';
-  const dir = options.dir ?? '.wiretype';
-  const recorderOpts: RecorderOptions = {
+  let target = options.target;
+  let prefixes = options.prefixes;
+  let name = options.name ?? 'vite';
+  let dir = options.dir ?? '.wiretype';
+  let recorderOpts: RecorderOptions = {
     includePrefixes: options.includePrefixes,
     excludePrefixes: options.excludePrefixes,
     maxBodyBytes: options.maxBodyBytes,
     redactHeaders: options.redactHeaders,
   };
-  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  let maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
   let store: RecordingStore | undefined;
   let initialized: Promise<void> | undefined;
 
   const ensureStore = (): Promise<void> => {
     if (!store) store = new RecordingStore(dir);
-    if (!initialized) initialized = store.init(name, options.target);
+    if (!initialized) initialized = store.init(name, target ?? '');
     return initialized;
   };
 
   const matchesPrefix = (path: string): boolean =>
-    options.prefixes.some((prefix) => path.startsWith(prefix));
+    (prefixes ?? []).some((prefix) => path.startsWith(prefix));
 
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const rawUrl = req.url ?? '/';
     const path = rawUrl.split('?')[0] ?? rawUrl;
 
-    if (!enabled || !matchesPrefix(path)) {
+    if (!enabled || target === undefined || !matchesPrefix(path)) {
       next();
       return;
     }
@@ -141,7 +151,7 @@ export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin
 
     let resolved: URL;
     try {
-      resolved = resolveTarget(options.target, rawUrl);
+      resolved = resolveTarget(target, rawUrl);
     } catch {
       send502(res, 'invalid target');
       return;
@@ -252,8 +262,43 @@ export default function wiretypeRecorder(options: WiretypePluginOptions): Plugin
 
   return {
     name: 'wiretype-recorder',
-    configResolved(config: ResolvedConfig) {
+    async configResolved(config: ResolvedConfig) {
       enabled = resolveEnabled(options.enabled, config.mode, !!process.env.WIRETYPE);
+
+      // Overlay wiretype.config.{mjs,js,json} from the Vite root: explicit
+      // plugin options win, config fills the gaps. A malformed config must
+      // never take the dev server down when the recorder is inert.
+      let cfg: WiretypeConfig | undefined;
+      try {
+        cfg = (await loadConfig(config.root))?.config;
+      } catch (err) {
+        if (enabled) {
+          const message = err instanceof Error ? err.message : String(err);
+          config.logger.error(`[wiretype] ${message}`);
+        }
+        cfg = undefined;
+      }
+      if (cfg) {
+        target = options.target ?? cfg.target;
+        prefixes = options.prefixes ?? cfg.prefixes;
+        if (options.name === undefined && cfg.name !== undefined) name = cfg.name;
+        if (options.dir === undefined && cfg.dir !== undefined) dir = cfg.dir;
+        recorderOpts = {
+          includePrefixes: options.includePrefixes ?? cfg.includePrefixes,
+          excludePrefixes: options.excludePrefixes ?? cfg.excludePrefixes,
+          maxBodyBytes: options.maxBodyBytes ?? cfg.maxBodyBytes,
+          redactHeaders: options.redactHeaders ?? cfg.redactHeaders,
+        };
+        maxBodyBytes = recorderOpts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+      }
+
+      if (enabled && (target === undefined || (prefixes ?? []).length === 0)) {
+        config.logger.warn(
+          '[wiretype] recording requested but no target/prefixes configured ' +
+            '(pass plugin options or add them to wiretype.config) — recorder stays inert.',
+        );
+        enabled = false;
+      }
     },
     configureServer(server: ViteDevServer) {
       server.middlewares.use(middleware);

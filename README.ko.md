@@ -110,15 +110,35 @@ enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, 
 
 ```
 wiretype demo    [--dir .wiretype] [--out wiretype-demo]
-wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
+wiretype record  [--target <url>] [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
                  [--targets ts,zod,msw,openapi,model] [--msw-fixtures]
-wiretype diff    <a> <b> [--dir .wiretype] [--json] [--md] [--lang en|ko]
+wiretype claims  --map claims.map.json [--out claims.json] [--tsconfig <file>] [--strict]
+wiretype diff    <a> <b> | --claims <a> --observed <b>
+                 [--dir .wiretype] [--json] [--md] [--lang en|ko]
                  [--fail-on breaking|risky|info] [--ignore-unmatched]
 wiretype list    [--dir .wiretype]
 wiretype ui      [--dir .wiretype] [--port 5099]
 ```
+
+반복되는 플래그는 설정 파일 하나로 — 작업 디렉토리의 `wiretype.config.mjs`
+(또는 `.js` / `.json`)를 모든 커맨드와 Vite 플러그인이 공유합니다 (명시적
+플래그/옵션이 항상 우선):
+
+```js
+// wiretype.config.mjs
+import { defineConfig } from 'wiretype';
+
+export default defineConfig({
+  target: 'http://localhost:8080',
+  prefixes: ['/api'],
+  dir: '.wiretype',
+  name: 'dev',
+});
+```
+
+설정 파일이 있으면 Vite 플러그인은 `wiretypeRecorder()` 한 줄이면 됩니다.
 
 `wiretype ui`는 zero-dependency 다크 테마 대시보드를 서빙합니다: 엔드포인트별 추론 타입 트리, 요청/응답 원본 탐색, 생성 코드 4종 미리보기 + 복사.
 
@@ -167,14 +187,49 @@ wiretype diff baseline/model.json baseline-check/model.json --md --lang ko
 전체 판정 규칙(nullable화, optional화, enum 확장, 포맷 소실, 상태코드 변화 등)은
 결정론적이며 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)에 문서화되어 있습니다.
 
+모든 finding에는 그것을 뒷받침하는 관측 샘플 수(`샘플 수(b)` 컬럼)가 붙습니다.
+샘플 3개 미만이면 ⚠로 표시됩니다 — 얕은 추론을 사실처럼 내밀지 않고,
+"와이어가 아직 충분히 말하지 않았다"고 wiretype이 먼저 알려줍니다.
+
+## 코드를 와이어에 감사받기 — `wiretype claims`
+
+드리프트 엔진은 **직접 작성한 타입**도 판정할 수 있습니다. 코드가 쓰는
+export 타입을 claims map으로 가리키면, TypeScript 컴파일러가 그것을 claims
+모델로 번역합니다 — 결정론적으로, 추측 없이:
+
+```json
+// claims.map.json
+{
+  "entries": [
+    { "method": "GET", "pattern": "/api/users/:userId",
+      "response": "src/apis/user/types.ts#UserDetail" }
+  ]
+}
+```
+
+```bash
+npx wiretype claims --map claims.map.json --out claims.json
+npx wiretype diff --claims claims.json --observed dev-session --ignore-unmatched
+```
+
+이제 `breaking`의 의미는 이렇습니다: **이 인터페이스는 실제 API에 대해
+거짓말을 하고 있다.** 컴파일러가 충실하게 번역할 수 없는 것(미해결 제네릭,
+`Date`, 함수, 재귀 타입)은 거부되어 not-auditable로 기록됩니다 — 조용히
+추측하는 일은 없습니다. 제네릭 래퍼는 한 줄짜리 export shim으로 claim합니다:
+`export type GetUserClaim = ApiResponse<UserDetail>`.
+
+생성된 `types.ts`/`handlers.ts`는 검증·mock용 산출물입니다 — wiretype은
+`GetApiUsersByUserIdResponse` 같은 생성 이름을 앱 코드에 쓰라고 요구하는
+대신, *당신의* 타입을 감사하고 고칩니다.
+
 ## Claude 에이전트 플러그인
 
 레포에 Claude Code / Cowork 플러그인([`claude-plugin/`](./claude-plugin))이
-포함되어 있습니다. **api-drift-audit** 스킬은: 에이전트가 API 콜사이트를 찾고,
-수제 타입/zod 스키마가 *믿고 있는* 구조를 claims 모델로 변환한 뒤, 판정은
-`wiretype diff`에 맡깁니다 — 그리고 breaking/risky 발견을 file:line에 매핑해서
-타입 수정, MSW mock 갱신, zod 가드 추가까지 제안합니다. 탐색과 설명은
-에이전트가, 판정은 결정론 엔진이.
+포함되어 있습니다. **api-drift-audit** 스킬은: 에이전트가 API 콜사이트를 찾아
+그 타입들을 claims map으로 가리키고, `wiretype claims`가 TypeScript 컴파일러로
+번역하며, 판정은 `wiretype diff`가 내립니다 — 그리고 breaking/risky 발견을
+file:line에 매핑해서 타입 수정, MSW mock 갱신, zod 가드 추가까지 제안합니다.
+에이전트는 탐색과 설명만; 번역과 판정은 둘 다 결정론입니다.
 
 ```bash
 claude plugin marketplace add ehdrms785/wiretype

@@ -1,9 +1,52 @@
 import { readFile } from 'node:fs/promises';
 import { RecordingStore, buildApiModel } from '../core/index.js';
 import type { ApiModel } from '../core/index.js';
-import { diffModels, renderMarkdownReport, resolveLang } from '../drift/index.js';
+import {
+  diffModels,
+  renderMarkdownReport,
+  resolveLang,
+  LOW_CONFIDENCE_SAMPLES,
+} from '../drift/index.js';
 import type { DriftFinding, DriftReport, DriftSeverity } from '../drift/index.js';
 import { renderTable } from './util.js';
+
+export interface DiffSideArgs {
+  a?: string;
+  b?: string;
+  claims?: string;
+  observed?: string;
+}
+
+/**
+ * Resolve the two diff sides from positionals and/or the --claims/--observed
+ * aliases. The aliases exist because swapping <a> and <b> silently flips
+ * every severity — named flags make the direction explicit in CI scripts.
+ * Mixing styles is an error; so is providing only one side.
+ */
+export function resolveDiffSides(args: DiffSideArgs): { a: string; b: string } {
+  const hasFlags = args.claims !== undefined || args.observed !== undefined;
+  const hasPositionals = args.a !== undefined || args.b !== undefined;
+
+  if (hasFlags && hasPositionals) {
+    throw new Error(
+      'Use either positional <a> <b> or --claims/--observed, not both.',
+    );
+  }
+  if (hasFlags) {
+    if (args.claims === undefined || args.observed === undefined) {
+      throw new Error(
+        'Both --claims (what the code believes) and --observed (observed reality) are required.',
+      );
+    }
+    return { a: args.claims, b: args.observed };
+  }
+  if (args.a === undefined || args.b === undefined) {
+    throw new Error(
+      'Provide two sides: positional <a> <b>, or --claims <x> --observed <y>.',
+    );
+  }
+  return { a: args.a, b: args.b };
+}
 
 export interface DiffOptions {
   a: string;
@@ -136,7 +179,24 @@ export function renderHuman(report: DriftReport): string {
     out.push(renderFindingsTable(group));
   }
 
+  if (report.findings.some(isLowConfidence)) {
+    out.push('');
+    out.push(
+      `⚠ low confidence: backed by fewer than ${LOW_CONFIDENCE_SAMPLES} observed samples — ` +
+        're-record with more traffic before acting on these.',
+    );
+  }
+
   return `${out.join('\n')}\n`;
+}
+
+function isLowConfidence(f: DriftFinding): boolean {
+  return f.bSamples !== undefined && f.bSamples < LOW_CONFIDENCE_SAMPLES;
+}
+
+function formatSamples(f: DriftFinding): string {
+  if (f.bSamples === undefined) return '-';
+  return isLowConfidence(f) ? `${f.bSamples} ⚠` : String(f.bSamples);
 }
 
 function renderFindingsTable(findings: DriftFinding[]): string {
@@ -146,6 +206,7 @@ function renderFindingsTable(findings: DriftFinding[]): string {
     { header: 'ENDPOINT', values: findings.map((f) => f.endpoint) },
     { header: 'PATH', values: findings.map((f) => formatPath(f)) },
     { header: 'CHANGE', values: findings.map((f) => formatChange(f)) },
+    { header: 'SAMPLES', values: findings.map((f) => formatSamples(f)) },
   ]);
 }
 

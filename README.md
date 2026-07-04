@@ -143,15 +143,35 @@ handler code. (JSON imports may need `resolveJsonModule: true` in your tsconfig.
 
 ```
 wiretype demo    [--dir .wiretype] [--out wiretype-demo]
-wiretype record  --target <url> [--port 5050] [--name session] [--dir .wiretype]
+wiretype record  [--target <url>] [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
 wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
                  [--targets ts,zod,msw,openapi,model] [--msw-fixtures]
-wiretype diff    <a> <b> [--dir .wiretype] [--json] [--md] [--lang en|ko]
+wiretype claims  --map claims.map.json [--out claims.json] [--tsconfig <file>] [--strict]
+wiretype diff    <a> <b> | --claims <a> --observed <b>
+                 [--dir .wiretype] [--json] [--md] [--lang en|ko]
                  [--fail-on breaking|risky|info] [--ignore-unmatched]
 wiretype list    [--dir .wiretype]
 wiretype ui      [--dir .wiretype] [--port 5099]
 ```
+
+Repeated flags can live in a config file — `wiretype.config.mjs` (or `.js` /
+`.json`) in the working directory, shared by every command AND the Vite
+plugin (explicit flags/options always win):
+
+```js
+// wiretype.config.mjs
+import { defineConfig } from 'wiretype';
+
+export default defineConfig({
+  target: 'http://localhost:8080',
+  prefixes: ['/api'],
+  dir: '.wiretype',
+  name: 'dev',
+});
+```
+
+With the config in place the Vite plugin shrinks to `wiretypeRecorder()`.
 
 `wiretype ui` serves a zero-dependency dark-theme dashboard: per-endpoint inferred type trees, raw request/response explorer, and all four generated outputs with copy buttons.
 
@@ -221,15 +241,51 @@ The full rule set (nullability, optionality, enum widening, format loss,
 status changes, ...) is deterministic and documented in
 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
+Every finding carries the number of observed samples backing it (the
+`Samples (b)` column); findings with fewer than 3 samples are marked ⚠ —
+wiretype tells you when the wire hasn't said enough yet, instead of
+presenting a thin inference as fact.
+
+## Audit your code against the wire — `wiretype claims`
+
+The drift engine can also judge **your hand-written types**. Point a claims
+map at the exported types your code uses, and the TypeScript compiler
+translates them into a claims model — deterministically, no guessing:
+
+```json
+// claims.map.json
+{
+  "entries": [
+    { "method": "GET", "pattern": "/api/users/:userId",
+      "response": "src/apis/user/types.ts#UserDetail" }
+  ]
+}
+```
+
+```bash
+npx wiretype claims --map claims.map.json --out claims.json
+npx wiretype diff --claims claims.json --observed dev-session --ignore-unmatched
+```
+
+`breaking` now means: **this interface lies about the real API.** Anything
+the compiler cannot translate faithfully (unresolved generics, `Date`,
+functions, recursive types) is refused and listed as not-auditable — never
+silently guessed. Generic wrappers are claimed via a one-line exported shim:
+`export type GetUserClaim = ApiResponse<UserDetail>`.
+
+The generated `types.ts`/`handlers.ts` are verification and mock artifacts —
+wiretype audits and fixes *your* types rather than asking you to adopt
+generated names like `GetApiUsersByUserIdResponse` in app code.
+
 ## Claude agent plugin
 
 The repo ships a Claude Code / Cowork plugin ([`claude-plugin/`](./claude-plugin))
-with an **api-drift-audit** skill: the agent finds your API call sites, extracts
-what your hand-written types and zod schemas *believe*, converts that into a
-claims model, and lets `wiretype diff` deliver the verdict — then maps every
-breaking/risky finding to file:line and offers to fix types, refresh MSW mocks,
-or add zod guards. The agent discovers and explains; the judgment stays
-deterministic.
+with an **api-drift-audit** skill: the agent finds your API call sites and
+points a claims map at the types they use; `wiretype claims` translates those
+types with the TypeScript compiler and `wiretype diff` delivers the verdict —
+then the agent maps every breaking/risky finding to file:line and offers to
+fix types, refresh MSW mocks, or add zod guards. The agent only discovers and
+explains; both the translation and the judgment stay deterministic.
 
 ```bash
 claude plugin marketplace add ehdrms785/wiretype

@@ -65,6 +65,26 @@ export function renderTable(columns: Column[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Layer a config file under CLI options. For each mapping entry
+ * `optionKey → configValue`, the config value wins ONLY when the option was
+ * not explicitly passed on the command line (i.e. it still holds its
+ * default). Pure: returns a new options object.
+ */
+export function layerConfig<T extends Record<string, unknown>>(
+  opts: T,
+  isExplicit: (key: string) => boolean,
+  overrides: Partial<Record<keyof T & string, unknown>>,
+): T {
+  const out: Record<string, unknown> = { ...opts };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
+    if (isExplicit(key)) continue;
+    out[key] = value;
+  }
+  return out as T;
+}
+
 /** Format an epoch-ms timestamp as an ISO string (or "-" when falsy). */
 export function formatTimestamp(ms: number | undefined): string {
   if (!ms) return '-';

@@ -49,7 +49,20 @@ export interface DriftFinding {
   after?: string;
   /** One human-readable sentence. */
   message: string;
+  /**
+   * Number of observed samples (side b) backing this finding at its
+   * location: the observed response count at the root, an object's merged
+   * sample count once inside a body, or a field's presence count when
+   * descending through it. Absent when the observed model carries no counts
+   * (e.g. hand-built or pre-0.3 model.json files). Findings with fewer than
+   * LOW_CONFIDENCE_SAMPLES deserve skepticism — the inference may reflect
+   * unexercised code paths rather than reality.
+   */
+  bSamples?: number;
 }
+
+/** Findings backed by fewer observed samples than this are low-confidence. */
+export const LOW_CONFIDENCE_SAMPLES = 3;
 
 export interface DriftSideInfo {
   name: string;

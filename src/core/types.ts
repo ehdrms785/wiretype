@@ -100,11 +100,23 @@ export interface FieldShape {
   shape: Shape;
   /** True when the field was absent in at least one merged object sample. */
   optional: boolean;
+  /**
+   * Number of merged object samples in which this key was PRESENT.
+   * Populated by inferShape (1) and summed by mergeShapes. Together with
+   * ObjectShape.samples this lets consumers judge how much evidence backs an
+   * optionality/type inference. Ignored by shapesEqual.
+   */
+  seen?: number;
 }
 
 export interface ObjectShape {
   kind: 'object';
   fields: Record<string, FieldShape>;
+  /**
+   * Number of object samples merged into this shape (array elements count
+   * individually). Ignored by shapesEqual. Absent on hand-built shapes.
+   */
+  samples?: number;
 }
 
 /** Dictionary-like object: many keys, homogeneous values. */

@@ -76,7 +76,8 @@ export function inferShape(value: JsonValue, opts?: BuildModelOptions): Shape {
     fields[key] = {
       shape: inferShape(obj[key] as JsonValue, opts),
       optional: false,
+      seen: 1,
     };
   }
-  return { kind: 'object', fields };
+  return { kind: 'object', fields, samples: 1 };
 }

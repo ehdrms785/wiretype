@@ -190,6 +190,64 @@ describe('wiretypeRecorder middleware (integration)', () => {
     expect(reqText.length).toBeLessThanOrEqual(1024);
   });
 
+  it('falls back to wiretype.config.json when plugin options are omitted', async () => {
+    upstream = await startUpstream();
+    dir = await mkdtemp(join(tmpdir(), 'wiretype-vite-'));
+    const storeDir = join(dir, '.wiretype');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      join(dir, 'wiretype.config.json'),
+      JSON.stringify({
+        target: upstream.url,
+        prefixes: ['/api'],
+        name: 'from-config',
+        dir: storeDir,
+      }),
+    );
+
+    const plugin = wiretypeRecorder(); // zero options
+    const logs: string[] = [];
+    const fakeResolved = {
+      mode: 'record',
+      root: dir,
+      logger: { warn: (m: string) => logs.push(m), error: (m: string) => logs.push(m) },
+    };
+    await (plugin.configResolved as unknown as (c: unknown) => Promise<void>)(fakeResolved);
+    host = await hostMiddleware(plugin);
+
+    const res = await fetch(`${host.url}/api/upload`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hello: 'config' }),
+    });
+    expect(res.status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 100));
+    const store = new RecordingStore(storeDir);
+    const rec = await store.load('from-config');
+    expect(rec.exchanges).toHaveLength(1);
+    expect(logs).toEqual([]);
+  });
+
+  it('stays inert (with a warning) when enabled but unconfigured', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'wiretype-vite-'));
+    const plugin = wiretypeRecorder();
+    const warnings: string[] = [];
+    const fakeResolved = {
+      mode: 'record',
+      root: dir, // no config file here
+      logger: { warn: (m: string) => warnings.push(m), error: (m: string) => warnings.push(m) },
+    };
+    await (plugin.configResolved as unknown as (c: unknown) => Promise<void>)(fakeResolved);
+    host = await hostMiddleware(plugin);
+
+    const res = await fetch(`${host.url}/api/anything`);
+    expect(res.status).toBe(404); // fell through to next()
+    expect(await res.text()).toBe('fallthrough');
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('inert');
+  });
+
   it('passes non-matching paths to next()', async () => {
     upstream = await startUpstream();
     dir = await mkdtemp(join(tmpdir(), 'wiretype-vite-'));

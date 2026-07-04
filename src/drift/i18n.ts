@@ -9,6 +9,7 @@
  */
 
 import type { DriftFinding, DriftKind, DriftReport, DriftSeverity } from './types.js';
+import { LOW_CONFIDENCE_SAMPLES } from './types.js';
 
 export type ReportLang = 'en' | 'ko';
 
@@ -25,7 +26,9 @@ interface ReportCatalog {
   /** `## <heading> (n)` section headings per severity. */
   severity: Record<DriftSeverity, string>;
   /** Findings table column headers. */
-  columns: { kind: string; endpoint: string; path: string; change: string };
+  columns: { kind: string; endpoint: string; path: string; change: string; samples: string };
+  /** Legend printed when any finding is low-confidence. Placeholder: {n}. */
+  lowConfidence: string;
   /** Human label per DriftKind. */
   kinds: Record<DriftKind, string>;
 }
@@ -38,7 +41,16 @@ const CATALOG: Record<ReportLang, ReportCatalog> = {
       '{info} info · {compared} endpoints compared, {onlyInA} only in a, {onlyInB} only in b.',
     noDrift: 'No drift detected.',
     severity: { breaking: 'Breaking', risky: 'Risky', info: 'Info' },
-    columns: { kind: 'Kind', endpoint: 'Endpoint', path: 'Path', change: 'Change' },
+    columns: {
+      kind: 'Kind',
+      endpoint: 'Endpoint',
+      path: 'Path',
+      change: 'Change',
+      samples: 'Samples (b)',
+    },
+    lowConfidence:
+      '⚠ low confidence: backed by fewer than {n} observed samples — ' +
+      're-record with more traffic before acting on these findings.',
     kinds: {
       'endpoint-removed': 'endpoint removed',
       'endpoint-added': 'endpoint added',
@@ -63,7 +75,16 @@ const CATALOG: Record<ReportLang, ReportCatalog> = {
       '참고 {info}건 · 비교한 엔드포인트 {compared}개, a에만 {onlyInA}개, b에만 {onlyInB}개.',
     noDrift: '드리프트가 감지되지 않았습니다.',
     severity: { breaking: '호환성 깨짐', risky: '위험', info: '참고' },
-    columns: { kind: '종류', endpoint: '엔드포인트', path: '경로', change: '변경' },
+    columns: {
+      kind: '종류',
+      endpoint: '엔드포인트',
+      path: '경로',
+      change: '변경',
+      samples: '샘플 수(b)',
+    },
+    lowConfidence:
+      '⚠ 낮은 신뢰도: 관측 샘플이 {n}개 미만인 판정입니다 — ' +
+      '조치 전에 더 많은 트래픽으로 다시 녹화하세요.',
     kinds: {
       'endpoint-removed': '엔드포인트 삭제',
       'endpoint-added': '엔드포인트 추가',
@@ -117,6 +138,12 @@ function formatChange(f: DriftFinding): string {
   return `${f.before ?? ABSENT} → ${f.after ?? ABSENT}`;
 }
 
+/** Observed sample count cell: "12", "2 ⚠" (low confidence), ABSENT. */
+function formatSamples(f: DriftFinding): string {
+  if (f.bSamples === undefined) return ABSENT;
+  return f.bSamples < LOW_CONFIDENCE_SAMPLES ? `${f.bSamples} ⚠` : String(f.bSamples);
+}
+
 /**
  * Render a DriftReport as deterministic Markdown: `# <title>`, a summary
  * line, then one `## <severity> (n)` section per non-empty severity with a
@@ -156,15 +183,22 @@ export function renderMarkdownReport(report: DriftReport, lang: ReportLang = 'en
     out.push(`## ${cat.severity[sev]} (${group.length})`);
     out.push('');
     out.push(
-      `| ${cat.columns.kind} | ${cat.columns.endpoint} | ${cat.columns.path} | ${cat.columns.change} |`,
+      `| ${cat.columns.kind} | ${cat.columns.endpoint} | ${cat.columns.path} | ` +
+        `${cat.columns.change} | ${cat.columns.samples} |`,
     );
-    out.push('| --- | --- | --- | --- |');
+    out.push('| --- | --- | --- | --- | --- |');
     for (const f of group) {
       out.push(
         `| ${escapeCell(cat.kinds[f.kind])} | ${escapeCell(f.endpoint)} | ` +
-          `${escapeCell(formatPath(f))} | ${escapeCell(formatChange(f))} |`,
+          `${escapeCell(formatPath(f))} | ${escapeCell(formatChange(f))} | ` +
+          `${escapeCell(formatSamples(f))} |`,
       );
     }
+  }
+
+  if (report.findings.some((f) => f.bSamples !== undefined && f.bSamples < LOW_CONFIDENCE_SAMPLES)) {
+    out.push('');
+    out.push(fill(cat.lowConfidence, { n: LOW_CONFIDENCE_SAMPLES }));
   }
 
   return `${out.join('\n')}\n`;

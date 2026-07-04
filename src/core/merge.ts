@@ -211,13 +211,30 @@ function mergeObjectLike(
         shape: mergeShapes(af.shape, bf.shape, opts),
         optional: af.optional || bf.optional,
       };
+      const seen = sumCounts(af.seen, bf.seen);
+      if (seen !== undefined) fields[k]!.seen = seen;
     } else if (af !== undefined) {
       fields[k] = { shape: af.shape, optional: true };
+      if (af.seen !== undefined) fields[k]!.seen = af.seen;
     } else if (bf !== undefined) {
       fields[k] = { shape: bf.shape, optional: true };
+      if (bf.seen !== undefined) fields[k]!.seen = bf.seen;
     }
   }
-  return { kind: 'object', fields };
+  const out: ObjectShape = { kind: 'object', fields };
+  const samples = sumCounts(ao.samples, bo.samples);
+  if (samples !== undefined) out.samples = samples;
+  return out;
+}
+
+/**
+ * Sum two sample counts, treating "absent" as 1 when the OTHER side has a
+ * count (hand-built shapes merged into counted ones stay roughly honest) and
+ * keeping the result absent when neither side was counted.
+ */
+function sumCounts(a?: number, b?: number): number | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  return (a ?? 1) + (b ?? 1);
 }
 
 function toObject(s: ObjectShape | RecordShape): ObjectShape {

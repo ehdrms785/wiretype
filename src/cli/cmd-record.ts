@@ -9,6 +9,10 @@ export interface RecordOptions {
   dir: string;
   include?: string[];
   exclude?: string[];
+  /** From wiretype.config only (no flag): capture cap per body. */
+  maxBodyBytes?: number;
+  /** From wiretype.config only (no flag): headers to redact. */
+  redactHeaders?: string[];
 }
 
 export async function runRecord(opts: RecordOptions): Promise<void> {
@@ -28,6 +32,8 @@ export async function runRecord(opts: RecordOptions): Promise<void> {
     port,
     includePrefixes: opts.include,
     excludePrefixes: opts.exclude,
+    maxBodyBytes: opts.maxBodyBytes,
+    redactHeaders: opts.redactHeaders,
     quiet: true,
     onExchange: async (ex: Exchange) => {
       await store.append(opts.name, ex);

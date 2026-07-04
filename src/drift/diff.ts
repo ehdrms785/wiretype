@@ -176,9 +176,10 @@ function diffResponses(
         message: `Response status ${status} was added (absent in a, present in b).`,
       });
     } else if (rA && rB) {
-      // Same status on both sides: compare body shapes.
+      // Same status on both sides: compare body shapes. The observed
+      // response count seeds the confidence (bSamples) propagation.
       findings.push(
-        ...diffShapes(rA.bodyShape, rB.bodyShape, { endpoint, status }),
+        ...diffShapes(rA.bodyShape, rB.bodyShape, { endpoint, status, bSeen: rB.count }),
       );
     }
   }
@@ -299,6 +300,12 @@ interface ShapeCtx {
   endpoint: string;
   status?: number;
   basePath?: string;
+  /**
+   * Observed-side evidence at the current location: response count at the
+   * root, ObjectShape.samples once inside an observed object, FieldShape.seen
+   * when descending through a field. Attached to findings as bSamples.
+   */
+  bSeen?: number;
 }
 
 /**
@@ -313,7 +320,7 @@ interface ShapeCtx {
 export function diffShapes(
   a: Shape | null,
   b: Shape | null,
-  ctx: { endpoint: string; status?: number; basePath?: string },
+  ctx: { endpoint: string; status?: number; basePath?: string; bSeen?: number },
 ): DriftFinding[] {
   if (a === null && b === null) return [];
   const path = ctx.basePath;
@@ -407,18 +414,21 @@ function compareCore(
   switch (a.kind) {
     case 'primitive':
       return comparePrimitive(a, b as Extract<Shape, { kind: 'primitive' }>, ctx, path);
-    case 'object':
-      return compareObject(
-        a,
-        b as Extract<Shape, { kind: 'object' }>,
-        ctx,
-        path,
-      );
+    case 'object': {
+      const bo = b as Extract<Shape, { kind: 'object' }>;
+      const objCtx = bo.samples !== undefined ? { ...ctx, bSeen: bo.samples } : ctx;
+      return compareObject(a, bo, objCtx, path);
+    }
     case 'record':
       return diffShapes(
         (a as Extract<Shape, { kind: 'record' }>).value,
         (b as Extract<Shape, { kind: 'record' }>).value,
-        { endpoint: ctx.endpoint, status: ctx.status, basePath: childPath(path, '{}') },
+        {
+          endpoint: ctx.endpoint,
+          status: ctx.status,
+          basePath: childPath(path, '{}'),
+          bSeen: ctx.bSeen,
+        },
       );
     case 'array': {
       const ea = (a as Extract<Shape, { kind: 'array' }>).element;
@@ -427,6 +437,7 @@ function compareCore(
         endpoint: ctx.endpoint,
         status: ctx.status,
         basePath: childPath(path, '[]'),
+        bSeen: ctx.bSeen,
       });
     }
     case 'null':
@@ -533,7 +544,15 @@ function compareObject(
       );
     } else if (!fa && fb) {
       findings.push(
-        finding(ctx, childP, 'field-added', 'info', undefined, fb.shape, `Field "${key}" was added in b.`),
+        finding(
+          { ...ctx, bSeen: fb.seen ?? ctx.bSeen },
+          childP,
+          'field-added',
+          'info',
+          undefined,
+          fb.shape,
+          `Field "${key}" was added in b.`,
+        ),
       );
     } else if (fa && fb) {
       // Optionality change.
@@ -546,12 +565,14 @@ function compareObject(
           finding(ctx, childP, 'optionality-changed', 'info', fa.shape, fb.shape, `Field "${key}" became required in b (was optional).`),
         );
       }
-      // Recurse into the field's shape.
+      // Recurse into the field's shape. The field's presence count (seen)
+      // is the evidence backing anything inferred about its value.
       findings.push(
         ...diffShapes(fa.shape, fb.shape, {
           endpoint: ctx.endpoint,
           status: ctx.status,
           basePath: childP,
+          bSeen: fb.seen ?? ctx.bSeen,
         }),
       );
     }
@@ -603,6 +624,7 @@ function compareUnions(
           endpoint: ctx.endpoint,
           status: ctx.status,
           basePath: path,
+          bSeen: ctx.bSeen,
         }),
       );
     } else {
@@ -724,6 +746,7 @@ function finding(
   };
   if (ctx.status !== undefined) f.status = ctx.status;
   if (path !== undefined) f.path = path;
+  if (ctx.bSeen !== undefined) f.bSamples = ctx.bSeen;
   const beforeText = renderMaybe(before);
   const afterText = renderMaybe(after);
   if (beforeText !== undefined) f.before = beforeText;

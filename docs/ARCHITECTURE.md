@@ -447,6 +447,74 @@ pretty-printed. model.json doubles as the claims interchange format: agent
 tooling that extracts "what the code believes" emits a partial ApiModel and
 diffs it against an observed model with --ignore-unmatched.
 
+## v0.3 additions — config file, sample counts, claims extraction
+
+### Config file (`src/config`, exported from the main entry)
+
+`wiretype.config.mjs` / `.js` / `.json` in the working directory (no upward
+search). `.mjs`/`.js` must default-export an object (`defineConfig({...})`
+identity helper exported for typing). Fields: `dir, name, target, prefixes,
+out, targets, includePrefixes, excludePrefixes, maxBodyBytes, redactHeaders`.
+Precedence everywhere: explicit CLI flags / plugin options > config file >
+built-in defaults. The CLI detects explicit flags via commander's
+`getOptionValueSource(...) === 'cli'`. The Vite plugin overlays the config in
+`configResolved` (loaded from `config.root`); with recording enabled but no
+target/prefixes resolvable it logs a warning and stays inert — a malformed
+config must never take a dev server down when the recorder is inert. The
+`.mjs` import is constructed via `new Function('u','return import(u)')` so
+bundlers/module runners cannot rewrite it (must load through real Node).
+
+### Sample counts (core)
+
+`ObjectShape.samples` = number of object samples merged into the shape
+(array elements count individually); `FieldShape.seen` = number of samples
+in which the key was present. `inferShape` seeds 1; `mergeShapes` sums
+(absent side of a sum defaults to 1; both-absent stays absent so hand-built
+shapes remain uncounted). `shapesEqual` ignores counts. Emitters ignore
+counts; model.json carries them — that is the interchange purpose.
+
+### Drift confidence
+
+`DriftFinding.bSamples` = observed-side evidence at the finding's location:
+response `count` at the root, `ObjectShape.samples` inside an observed
+object, `FieldShape.seen` when descending through a field (field-added uses
+the added field's own `seen`). `LOW_CONFIDENCE_SAMPLES = 3`; both renderers
+add a "Samples (b)" column, mark `< 3` with ⚠, and print a localized legend
+when any low-confidence finding exists. `diff` also accepts
+`--claims <ref> --observed <ref>` as explicit aliases for the positional
+`<a> <b>` (mixing styles or providing one side is an error).
+
+### Claims extraction (`src/claims`, CLI `wiretype claims`)
+
+Deterministic "what the code believes" extraction. Input: a claims map JSON
+`{ entries: [{ method, pattern, status?, response?, request?, query? }] }`
+where each slot is a `path/to/file.ts#ExportedTypeName` ref resolved against
+the map file's directory. The TypeScript compiler API (optional peer dep
+`typescript >= 5`, loaded dynamically with an actionable install hint)
+translates each referenced type into a Shape; the tsconfig nearest to the
+map (or `--tsconfig`) supplies module resolution.
+
+Translation rules: string/number/boolean → primitives (TS numbers are
+`number`, never `integer`); literal unions → sorted `enum`; `X | null` →
+union with null; `X | undefined` / `field?:` → `optional: true` (undefined
+stripped); arrays/tuples → array (tuple elements merged via `mergeShapes`);
+`Record<string, X>` / lone string index signature → record; intersections →
+merged object; `any`/`unknown` → `{ kind: 'unknown' }` (an honest
+non-claim). REFUSED, never guessed: unresolved type parameters (hint: claim
+a concrete instantiation via an exported shim alias), `Date`/`Promise`/
+`Map`/`Set`, function/constructor signatures, `never`, bigint, symbol,
+undefined/void at value positions, recursive types, mixed index signature +
+named properties, depth > 32, missing files/exports. Refusals are collected
+per slot into `notAuditable` (endpoint, slot, ref, reason); an endpoint with
+every slot refused is EXCLUDED from the model (refused ≠ claims-nothing).
+
+Output (`--out`, default claims.json): an ApiModel with
+`name: "claims", target: "source-code", generatedAt: 0` (fixed for
+determinism), `count: 1` per response, plus the `notAuditable` array
+embedded in the same JSON (diff ignores unknown keys). `--strict` exits 1 on
+any refusal. Object shapes from claims carry no `samples`/`seen` — claims
+are beliefs, not observations.
+
 ## Quality bar
 
 - `npm run build` clean, `npm test` green, no `any` leaks in public APIs.

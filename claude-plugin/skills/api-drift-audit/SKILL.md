@@ -36,12 +36,21 @@ Two conventions apply to everything below:
 ## Prerequisites
 
 1. `wiretype` available: `npx wiretype --help` (else `npm i -D wiretype`).
-2. A recording of real traffic. Check `npx wiretype list --dir .wiretype`
-   (also try `--dir apps/<app>/.wiretype` in monorepos). If none exists,
-   stop and tell the user how to record, then resume:
+2. `typescript` available in the project (needed by `wiretype claims`;
+   virtually every TS project has it). If missing, fall back to the manual
+   translation table in Step 4.
+3. A recording of real traffic. Check `npx wiretype list --dir .wiretype`
+   (also try `--dir apps/<app>/.wiretype` in monorepos; a `wiretype.config.*`
+   file may set `dir`). If none exists, stop and tell the user how to record,
+   then resume:
    - **Vite projects** with `wiretypeRecorder(...)` in the plugins array:
      run `vite --mode record` (no env var needed) and click through the app
      against the real backend.
+   - **Projects with E2E / integration tests (Cypress, Playwright, ...)**:
+     run the existing test suite against the dev server in record mode —
+     tests solve auth and parameters, so traffic generation is fully
+     unattended: e.g. start `vite --mode record`, then run Cypress against
+     it. This is the fastest zero-click path to a recording.
    - **Anything else**: `npx wiretype record --target <api-url> --port <p>
      --name <n> --dir <d>` and point the app/requests at the proxy port.
 
@@ -97,15 +106,68 @@ For each endpoint pattern in the model, find where the scoped code calls it:
   wire but no call site found in scope — dead traffic, out-of-scope code, or
   missed discovery; report, don't guess).
 
-## Step 4 — Claims extraction (translate, don't judge)
+## Step 4 — Claims extraction (deterministic: point, don't translate)
 
-For each mapped call site, find the schema the code believes: the TS
-interface/type used for the response, the zod schema parsing it, or the MSW
-handler mock shaped like it. Translate each into wiretype's Shape AST and
-assemble a partial ApiModel (**claims model**) with the same JSON structure
-as model.json.
+Your job here is only to POINT at the right types — the translation into
+Shape AST is done deterministically by the TypeScript compiler via
+`wiretype claims`. You never hand-translate a type when the command is
+available.
 
-Translation table (TS → Shape):
+1. For each mapped call site, identify the exported TS type the code uses
+   for the response (and request/query when auditing mutations).
+2. Write a claims map at `/tmp/drift-audit/claims.map.json`:
+
+```json
+{
+  "entries": [
+    {
+      "method": "GET",
+      "pattern": "/api/users/:userId",
+      "status": 200,
+      "response": "src/apis/user/types.ts#UserDetail"
+    },
+    {
+      "method": "POST",
+      "pattern": "/api/users",
+      "status": 201,
+      "response": "src/apis/user/types.ts#UserDetail",
+      "request": "src/apis/user/types.ts#CreateUserBody"
+    }
+  ]
+}
+```
+
+   - Refs are `path/to/file.ts#ExportedTypeName`, resolved relative to the
+     map file's directory — place the map in the project (e.g. repo/app
+     root) or use absolute paths.
+   - Pattern strings must EXACTLY match the observed model's patterns (same
+     `:paramName`s) or the diff will treat them as different endpoints.
+   - **Generic wrappers** (`ApiResponse<UserDetail>` etc.): add a shim file
+     in the project, e.g. `/tmp/drift-audit` won't work for imports — put
+     `wiretype-claims.shim.ts` next to the API code:
+     `export type GetUserClaim = ApiResponse<UserDetail>;`
+     and reference `...shim.ts#GetUserClaim`. The shim is code — reviewable
+     and deterministic. Delete it after the audit.
+
+3. Run the extractor:
+
+```bash
+npx wiretype claims --map /tmp/drift-audit/claims.map.json \
+  --out /tmp/drift-audit/claims.json
+```
+
+The command translates every referenced type with the TypeScript compiler
+and REFUSES anything it cannot translate faithfully (unresolved generics,
+`Date`, functions, recursion...) — refusals are listed in the output's
+`notAuditable` array and in stdout. Report them under "not auditable";
+never re-translate a refused type by hand to force a verdict.
+
+Manual fallback (ONLY when `typescript` is unavailable or the command
+fails): translate types yourself with the table below into a partial
+ApiModel with `"name": "claims", "target": "source-code", "generatedAt": 0`,
+and endpoints entries with `params: [], exchangeIds: []` and
+`responses: [{ status, bodyShape, count: 1 }]`. Label the audit as
+"manual claims translation — not deterministic" in the report.
 
 | TS construct | Shape |
 |---|---|
@@ -119,46 +181,29 @@ Translation table (TS → Shape):
 | `Record<string, X>` | `{ "kind": "record", "value": X }` |
 | `unknown` / `any` | `{ "kind": "unknown" }` |
 
-Claims model skeleton (one endpoint):
-
-```json
-{
-  "name": "claims", "target": "source-code", "generatedAt": 0,
-  "endpoints": [{
-    "method": "GET", "pattern": "/api/users/:userId",
-    "params": [], "queryShape": null,
-    "requestBodyShape": null,
-    "responses": [{ "status": 200, "bodyShape": { ... }, "count": 1 }],
-    "exchangeIds": [], "operationId": "getApiUsersByUserId",
-    "typeName": "GetApiUsersByUserId"
-  }]
-}
-```
-
-Pattern strings must EXACTLY match the observed model's patterns (same
-`:paramName`s) or the diff will treat them as different endpoints.
-If a claim is ambiguous (type assembled from generics you can't resolve,
-`any`-typed response), EXCLUDE the endpoint from claims and list it under
-"not auditable" in the report — never guess a claim.
-
-Write the result to `/tmp/drift-audit/claims.json`.
-
 ## Step 5 — Deterministic verdict
 
 ```bash
-npx wiretype diff /tmp/drift-audit/claims.json /tmp/drift-audit/model.json \
+npx wiretype diff --claims /tmp/drift-audit/claims.json \
+  --observed /tmp/drift-audit/model.json \
   --ignore-unmatched --json > /tmp/drift-audit/report.json
 ```
 
-Direction matters: claims = side "a" (belief), observed = side "b" (reality);
-**breaking** = the code will break against reality. `--ignore-unmatched`
-suppresses noise from endpoints you couldn't claim.
+Always use the named `--claims`/`--observed` flags — swapping positional
+sides silently flips every severity. **breaking** = the code will break
+against reality. `--ignore-unmatched` suppresses noise from endpoints you
+couldn't claim.
+
+Findings carry a `bSamples` field (observed samples backing the finding);
+the reports mark anything under 3 samples with ⚠ — surface those as
+low-confidence rather than actionable.
 
 When the conversation is in Korean or English, also generate a localized
 findings skeleton to build the human report on:
 
 ```bash
-npx wiretype diff /tmp/drift-audit/claims.json /tmp/drift-audit/model.json \
+npx wiretype diff --claims /tmp/drift-audit/claims.json \
+  --observed /tmp/drift-audit/model.json \
   --ignore-unmatched --md --lang ko   # or --lang en
 ```
 
@@ -179,10 +224,11 @@ conversation language (use the `--md --lang` skeleton when ko/en):
 2. **Findings table** — severity | endpoint | path | before → after |
    **code location(s)** (file:line from Step 3) | mapping confidence.
    Findings come verbatim from report.json; you add locations and confidence.
-3. **Not auditable** — endpoints excluded in Step 4 and why.
+3. **Not auditable** — the `notAuditable` refusals from claims.json (ref +
+   reason, verbatim), plus endpoints you could not map in Step 3.
 4. **Unmapped traffic** — observed endpoints with no call site in scope.
-5. **Low-confidence endpoints** — sample count < 3, and suspected enum
-   false positives (see Step 2 caveat).
+5. **Low-confidence findings** — findings the engine marked ⚠ (bSamples < 3),
+   and suspected enum false positives (see Step 2 caveat).
 6. **Proposed fixes** — see Step 7; do not apply anything yet.
 
 ## Step 7 — Fix gate (explicit approval, item by item)
@@ -194,11 +240,18 @@ fixes ordered by severity (breaking first), each entry containing:
 - the exact file:line to change,
 - the exact change (before → after snippet or generated-import swap).
 
-Typical fix shapes: edit hand-written interfaces/zod schemas to match
-observed reality; replace with generated `types.ts`/`schemas.ts` imports
-(`npx wiretype gen --targets ts,zod`); refresh MSW mocks (prefer the
-dedicated `msw-refresh` skill for that); add generated zod schemas at
-response boundaries so the next drift fails loudly in dev.
+Typical fix shapes, in order of preference: EDIT the hand-written
+interfaces/zod schemas in place to match observed reality (the team's names
+and structure stay intact); refresh MSW mocks (prefer the dedicated
+`msw-refresh` skill); add generated zod schemas from
+`npx wiretype gen --targets zod` as runtime guards at response boundaries so
+the next drift fails loudly in dev.
+
+Positioning note: wiretype's generated `types.ts` uses mechanical names
+(`GetApiUsersByUserIdResponse`) — it is a VERIFICATION and MOCK artifact,
+not a replacement for the team's domain types. Do not propose wholesale
+"replace your types with generated imports" fixes; propose targeted edits
+to the team's own types instead.
 
 Apply ONLY the numbered items the user selects. Never auto-fix, never bundle
 unselected items in. After applying, run the project's typecheck and tests
