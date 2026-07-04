@@ -31,6 +31,7 @@ export class RecordingStore {
   /** Create or open a recording. Existing recordings keep their exchanges. */
   async init(name: string, target: string): Promise<void> {
     await mkdir(this.recDir(name), { recursive: true });
+    await this.ensureGitignore();
     let meta: RecordingMeta | undefined;
     try {
       const raw = await readFile(this.metaPath(name), 'utf8');
@@ -55,6 +56,28 @@ export class RecordingStore {
       meta.target = target;
       meta.updatedAt = now;
       await writeFile(this.metaPath(name), JSON.stringify(meta, null, 2), 'utf8');
+    }
+  }
+
+  /**
+   * Drop a `.gitignore` (ignoring everything) into the store directory so
+   * captured payloads — which contain REAL response data — can never be
+   * committed by accident. Created once; an existing file is left alone so
+   * users who deliberately commit recordings can delete its content.
+   */
+  private async ensureGitignore(): Promise<void> {
+    const path = join(this.dir, '.gitignore');
+    try {
+      await readFile(path, 'utf8');
+    } catch {
+      try {
+        await writeFile(path, '# wiretype recordings contain real captured payloads.\n*\n', {
+          encoding: 'utf8',
+          flag: 'wx',
+        });
+      } catch {
+        // Racing writer or unwritable dir — never fail recording over this.
+      }
     }
   }
 

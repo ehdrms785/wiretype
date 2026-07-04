@@ -1,23 +1,51 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { RecordingStore, buildApiModel } from '../core/index.js';
-import type { ApiModel } from '../core/index.js';
+import type { ApiModel, RecordingMeta } from '../core/index.js';
 import { generateAll } from '../codegen/index.js';
 import { parseTargets, renderTable } from './util.js';
 
 export interface GenOptions {
-  name: string;
+  /** Recording name. When omitted, the store's ONLY recording is used. */
+  name?: string;
   dir: string;
   out: string;
   targets: string;
   mswFixtures?: boolean;
 }
 
+/**
+ * Resolve which recording to generate from. Explicit name wins; otherwise a
+ * store with exactly one recording needs no flag at all (the common
+ * first-run case — the vite plugin records as "vite", `wiretype record` as
+ * "session", and the user shouldn't have to know that).
+ */
+export function resolveRecordingName(
+  metas: RecordingMeta[],
+  dir: string,
+  name?: string,
+): string {
+  if (name !== undefined) return name;
+  if (metas.length === 1) return metas[0]!.name;
+  if (metas.length === 0) {
+    throw new Error(
+      `No recordings in ${resolve(dir)}. Record traffic first ` +
+        `(Vite plugin: WIRETYPE=1 vite, or: wiretype record --target <url>). ` +
+        `In monorepos, run from the app directory or pass --dir.`,
+    );
+  }
+  const names = metas.map((m) => m.name).sort();
+  throw new Error(
+    `Multiple recordings in ${resolve(dir)}: ${names.join(', ')}. Pass --name <recording>.`,
+  );
+}
+
 export async function runGen(opts: GenOptions): Promise<void> {
   const targets = parseTargets(opts.targets);
 
   const store = new RecordingStore(opts.dir);
-  const recording = await store.load(opts.name);
+  const name = resolveRecordingName(await store.list(), opts.dir, opts.name);
+  const recording = await store.load(name);
   const model = buildApiModel(recording);
 
   const files = generateAll(model, targets, { mswFixtures: opts.mswFixtures ?? false });
@@ -30,7 +58,7 @@ export async function runGen(opts: GenOptions): Promise<void> {
   }
 
   process.stdout.write(
-    `wiretype gen → wrote ${files.length} file(s) to ${opts.out}\n` +
+    `wiretype gen → recording "${name}" → wrote ${files.length} file(s) to ${opts.out}\n` +
       files.map((f) => `  ${join(opts.out, f.path)}`).join('\n') +
       '\n\n',
   );

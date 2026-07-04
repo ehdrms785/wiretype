@@ -70,7 +70,7 @@ program
 program
   .command('gen')
   .description('Load a recording, build the model, and generate code.')
-  .option('--name <recording>', 'recording name', 'session')
+  .option('--name <recording>', 'recording name (default: the only recording in the store)')
   .option('--dir <dir>', 'store directory', '.wiretype')
   .option('--out <dir>', 'output directory', 'wiretype-generated')
   .option('--targets <targets>', 'comma-separated targets (ts,zod,msw,openapi,model)', 'ts,zod,msw,openapi,model')

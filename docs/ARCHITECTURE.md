@@ -447,6 +447,22 @@ pretty-printed. model.json doubles as the claims interchange format: agent
 tooling that extracts "what the code believes" emits a partial ApiModel and
 diffs it against an observed model with --ignore-unmatched.
 
+## v0.3 additions — first-run DX (normative)
+
+- `wiretype gen --name` is optional: with exactly one recording in the store
+  it is auto-selected; zero → error explaining how to record (and the
+  monorepo --dir hint); multiple → error listing names. The chosen recording
+  is echoed in the output line.
+- `RecordingStore.init` drops an ignore-everything `.gitignore` into the
+  store directory (captured payloads are real data and must not reach git);
+  an existing file is never overwritten, failures never break recording.
+- The vite plugin logs one info line on the first captured exchange
+  ("recording to <dir>/<name> — generate when done: npx wiretype gen").
+- README documents the `--mode record` env-loading caveat (`.env.record`
+  replaces `.env.development`) with `WIRETYPE=1 vite` / cross-env as the
+  mode-preserving alternative, and clarifies that existing `server.proxy`
+  entries stay (the recorder only fronts the prefixes while recording).
+
 ## v0.3 additions — config file, sample counts, claims extraction
 
 ### Config file (`src/config`, exported from the main entry)

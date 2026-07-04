@@ -61,7 +61,8 @@ npx wiretype ui
 **방법 B — Vite 플러그인 (워크플로우 변화 제로):**
 
 ```ts
-// vite.config.ts — 해당 prefix의 server.proxy 항목을 대체
+// vite.config.ts — 기존 server.proxy는 그대로 두세요; wiretype은 녹화 중일
+// 때만 해당 prefix 앞에 끼어들고, 평소에는 아무것도 하지 않습니다
 import wiretypeRecorder from 'wiretype/vite';
 
 export default defineConfig({
@@ -78,10 +79,31 @@ export default defineConfig({
 vite --mode record   # 녹화 켜짐; 그냥 `vite`면 플러그인은 아무것도 안 함
 ```
 
-플러그인은 항상 꽂아둬도 됩니다 — dev 서버가 `record` 모드로 실행될 때만
-(또는 `WIRETYPE` env가 설정됐을 때만) 녹화하고, `enabled` 옵션으로 강제
-지정할 수도 있습니다. 평소처럼 개발하고 `npx wiretype gen`만 실행하면, MSW
-핸들러가 실서버와 일치함이 보장됩니다.
+> **`--mode record` 주의**: Vite mode를 바꾸면 로드되는 `.env.*` 파일도
+> 바뀝니다 (`.env.development` 대신 `.env.record`). 앱이 `.env.development`에
+> 의존한다면 mode를 건드리지 않는 env 스위치를 쓰세요:
+>
+> ```bash
+> WIRETYPE=1 vite                      # macOS / Linux
+> npx cross-env WIRETYPE=1 vite       # 크로스 플랫폼
+> ```
+
+플러그인은 항상 꽂아둬도 됩니다 — dev 서버가 `record` 모드로 실행되거나
+`WIRETYPE` env가 설정됐을 때만 녹화하고, `enabled` 옵션으로 강제 지정할 수도
+있습니다. 평소처럼 개발하고 `npx wiretype gen`만 실행하면 됩니다 — 저장소에
+recording이 하나뿐이면 플래그도 필요 없습니다. 녹화본은 `.wiretype/`에
+쌓이는데, wiretype이 그 안에 `.gitignore`를 만들어두므로 캡처된 실데이터가
+git에 들어갈 일은 없습니다.
+
+생성된 핸들러를 MSW에 꽂는 건 늘 하던 세 줄입니다:
+
+```ts
+// src/mocks/browser.ts
+import { setupWorker } from 'msw/browser';
+import { handlers } from '../../wiretype-generated/handlers';
+
+export const worker = setupWorker(...handlers);
+```
 
 mock 데이터를 핸들러 코드에서 분리하고 싶다면 `wiretype gen --msw-fixtures`:
 각 바디를 `fixtures/<operationId>.<status>.json`으로 쓰고, `handlers.ts`는
@@ -112,7 +134,7 @@ enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, 
 wiretype demo    [--dir .wiretype] [--out wiretype-demo]
 wiretype record  [--target <url>] [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
-wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
+wiretype gen     [--name <recording>] [--dir .wiretype] [--out wiretype-generated]
                  [--targets ts,zod,msw,openapi,model] [--msw-fixtures]
 wiretype claims  --map claims.map.json [--out claims.json] [--tsconfig <file>] [--strict]
 wiretype diff    <a> <b> | --claims <a> --observed <b>

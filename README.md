@@ -62,7 +62,8 @@ npx wiretype ui
 **Option B — Vite plugin (zero workflow change):**
 
 ```ts
-// vite.config.ts — replaces your server.proxy entry for these prefixes
+// vite.config.ts — keep your server.proxy as is; wiretype steps in front of
+// these prefixes only while recording and stays inert otherwise
 import wiretypeRecorder from 'wiretype/vite';
 
 export default defineConfig({
@@ -79,10 +80,22 @@ export default defineConfig({
 vite --mode record   # recording on; plain `vite` leaves the plugin inert
 ```
 
+> **Heads-up on `--mode record`**: changing the Vite mode changes which
+> `.env.*` files load (`.env.record` instead of `.env.development`). If your
+> app needs `.env.development`, use the env-var switch instead — it records
+> without touching the mode:
+>
+> ```bash
+> WIRETYPE=1 vite                      # macOS / Linux
+> npx cross-env WIRETYPE=1 vite       # cross-platform
+> ```
+
 Leave the plugin in the array permanently — it only records when the dev
-server runs in mode `record` (or the `WIRETYPE` env var is set; pass
-`enabled` to override). Develop as usual, then `npx wiretype gen`. Your MSW
-handlers are now guaranteed to match the real server.
+server runs in mode `record` or the `WIRETYPE` env var is set (pass
+`enabled` to override). Develop as usual, then `npx wiretype gen` — with a
+single recording in the store, no flags needed. Recordings land in
+`.wiretype/`, where wiretype drops a `.gitignore` so captured payloads never
+end up in git.
 
 ## What gets inferred
 
@@ -134,6 +147,16 @@ export const handlers = [
 ];
 ```
 
+Wiring the generated handlers into MSW is the usual three lines:
+
+```ts
+// src/mocks/browser.ts
+import { setupWorker } from 'msw/browser';
+import { handlers } from '../../wiretype-generated/handlers';
+
+export const worker = setupWorker(...handlers);
+```
+
 Prefer mock data out of handler code? `wiretype gen --msw-fixtures` writes each
 body to `fixtures/<operationId>.<status>.json` and emits a thin `handlers.ts`
 that imports them — re-recording refreshes the JSON without ever touching
@@ -145,7 +168,7 @@ handler code. (JSON imports may need `resolveJsonModule: true` in your tsconfig.
 wiretype demo    [--dir .wiretype] [--out wiretype-demo]
 wiretype record  [--target <url>] [--port 5050] [--name session] [--dir .wiretype]
                  [--include <prefix...>] [--exclude <prefix...>]
-wiretype gen     [--name session] [--dir .wiretype] [--out wiretype-generated]
+wiretype gen     [--name <recording>] [--dir .wiretype] [--out wiretype-generated]
                  [--targets ts,zod,msw,openapi,model] [--msw-fixtures]
 wiretype claims  --map claims.map.json [--out claims.json] [--tsconfig <file>] [--strict]
 wiretype diff    <a> <b> | --claims <a> --observed <b>

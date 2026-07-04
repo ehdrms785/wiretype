@@ -127,6 +127,8 @@ export default function wiretypeRecorder(options: WiretypePluginOptions = {}): P
 
   let store: RecordingStore | undefined;
   let initialized: Promise<void> | undefined;
+  let logger: { info(msg: string): void } | undefined;
+  let announced = false;
 
   const ensureStore = (): Promise<void> => {
     if (!store) store = new RecordingStore(dir);
@@ -255,6 +257,13 @@ export default function wiretypeRecorder(options: WiretypePluginOptions = {}): P
       await ensureStore();
       const exchange: Exchange = buildExchange({ ...input, opts: recorderOpts });
       await store!.append(name, exchange);
+      if (!announced) {
+        announced = true;
+        // First capture: tell the user where it goes and what comes next.
+        logger?.info(
+          `[wiretype] recording to ${dir}/${name} — generate when done: npx wiretype gen`,
+        );
+      }
     } catch {
       // Recording failures must never break the dev server.
     }
@@ -264,6 +273,7 @@ export default function wiretypeRecorder(options: WiretypePluginOptions = {}): P
     name: 'wiretype-recorder',
     async configResolved(config: ResolvedConfig) {
       enabled = resolveEnabled(options.enabled, config.mode, !!process.env.WIRETYPE);
+      logger = config.logger;
 
       // Overlay wiretype.config.{mjs,js,json} from the Vite root: explicit
       // plugin options win, config fills the gaps. A malformed config must
