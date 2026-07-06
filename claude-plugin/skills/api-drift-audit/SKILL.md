@@ -41,18 +41,67 @@ Two conventions apply to everything below:
    translation table in Step 4.
 3. A recording of real traffic. Check `npx wiretype list --dir .wiretype`
    (also try `--dir apps/<app>/.wiretype` in monorepos; a `wiretype.config.*`
-   file may set `dir`). If none exists, stop and tell the user how to record,
-   then resume:
-   - **Vite projects** with `wiretypeRecorder(...)` in the plugins array:
-     run `vite --mode record` (no env var needed) and click through the app
-     against the real backend.
-   - **Projects with E2E / integration tests (Cypress, Playwright, ...)**:
-     run the existing test suite against the dev server in record mode —
-     tests solve auth and parameters, so traffic generation is fully
-     unattended: e.g. start `vite --mode record`, then run Cypress against
-     it. This is the fastest zero-click path to a recording.
-   - **Anything else**: `npx wiretype record --target <api-url> --port <p>
-     --name <n> --dir <d>` and point the app/requests at the proxy port.
+   file may set `dir`). If none exists, offer the following paths IN ORDER —
+   each behind an explicit approval gate. Never generate traffic without the
+   user's go-ahead: it hits a real backend.
+
+   **(a) E2E / integration tests exist (Cypress, Playwright, ...)** — offer
+   to run them yourself in record mode: start the dev server recording
+   (`vite --mode record`, or `WIRETYPE=1 vite` when the app depends on
+   `.env.development`), run the suite against it, stop the server. Tests
+   were written and reviewed by humans, so auth AND side effects are already
+   vetted — this is the only fully-unattended path. Report how many
+   exchanges were captured.
+
+   **(b) No E2E suite, header-based auth (Bearer token / API key)** — offer
+   to GENERATE a GET-only seed-traffic script instead of asking the user to
+   click around. You will discover call sites in Step 3 anyway; use the same
+   knowledge to write `wiretype-traffic.seed.mjs` in the project:
+   - GET endpoints only — mutations are excluded BY CONSTRUCTION, so the
+     script is safe to run against a shared dev backend. List the skipped
+     non-GET endpoints so the user knows the coverage gap.
+   - Path params: fill ids from list-endpoint responses when discoverable
+     (fetch the list first, reuse returned ids), otherwise leave a marked
+     `TODO` the user fills in.
+   - Auth: read a header from the `AUTH_HEADER` env var (e.g.
+     `AUTH_HEADER='authorization: Bearer …'`). Never hardcode tokens, never
+     ask the user to paste a token into chat — they set the env var when
+     running the script.
+   - The script targets the recording proxy
+     (`npx wiretype record --target <api-url> --port 5050`) or the record-
+     mode dev server, drains every response body, and prints per-request
+     status lines.
+   Show the script, let the user review it (it is all-GET and auditable),
+   then run it on approval and clean it up afterwards (or leave it if the
+   team wants to keep it as a fixture).
+   This path only works when auth travels in a header the user can hand
+   over. Cookie/session-based apps (SSO redirects, httpOnly session
+   cookies) cannot be driven this way — use (c).
+
+   **(c) Browser tooling available with a logged-in session** (Claude in
+   Chrome, a Playwright/browser MCP, etc.) — offer to drive the app
+   YOURSELF through the record-mode dev server using the user's existing
+   logged-in session. This is the right path for cookie/session auth where
+   no header can be extracted. Strict rules, because a live session on a
+   shared backend can mutate real data:
+   - Get explicit approval first, and say clearly which app/URL you will
+     drive and that you will only READ.
+   - Navigate; don't operate. Visit routes and list/detail pages (URL
+     navigation, pagination, tabs, opening records). NEVER submit forms,
+     never click buttons whose labels imply writes (save, delete, create,
+     update, acknowledge, approve, send, ...). When in doubt, don't click —
+     add the page to a "not covered" list instead.
+   - Prefer the route list you discovered in the code (router config) over
+     free exploration; report which routes you visited and which you
+     skipped, so coverage is explicit.
+   - Stop when `wiretype list` shows the endpoints in scope have samples
+     (a handful per endpoint is enough for a first audit; more can be
+     recorded later).
+
+   **(d) Fallback — manual click-through**: start record mode for the user
+   (`vite --mode record` / `WIRETYPE=1 vite`, or the standalone proxy) and
+   ask them to click through the app; their session, their control over
+   side effects. Resume the audit once `wiretype list` shows exchanges.
 
 ## Step 1 — Scope (ask before you scan)
 
