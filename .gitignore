@@ -4,3 +4,7 @@ dist/
 .wiretype/
 wiretype-generated/
 *.tgz
+
+# personal working notes (not for the public repo)
+CLAUDE.md
+CLAUDE.local.md
