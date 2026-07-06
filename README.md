@@ -196,7 +196,7 @@ export default defineConfig({
 
 With the config in place the Vite plugin shrinks to `wiretypeRecorder()`.
 
-`wiretype ui` serves a zero-dependency dark-theme dashboard: per-endpoint inferred type trees, raw request/response explorer, and all four generated outputs with copy buttons.
+`wiretype ui` serves a zero-dependency dark-theme dashboard: per-endpoint inferred type trees, raw request/response explorer, all four generated outputs with copy buttons — and a **Drift tab** that runs the deterministic diff in the browser: pick a baseline (an older recording, or a `claims.json`/`model.json` file) and see exactly which endpoints changed, severity-grouped with sample-count confidence markers. The two everyday questions — *"did the API drift from my MSW mocks?"* and *"are my TS/zod types lying?"* — answered without leaving the browser.
 
 ## Vite plugin options
 

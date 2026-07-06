@@ -1,8 +1,11 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RecordingStore, buildApiModel } from '../core/index.js';
+import type { ApiModel } from '../core/index.js';
+import { diffModels } from '../drift/index.js';
 import {
   generateMsw,
   generateOpenApi,
@@ -31,12 +34,14 @@ const VIEWER_CANDIDATES: URL[] = [
   new URL('./viewer/index.html', import.meta.url),
 ];
 
-export async function runUi(opts: UiOptions): Promise<void> {
-  const port = Number.parseInt(opts.port, 10);
-  if (Number.isNaN(port)) {
-    throw new Error(`Invalid --port: ${opts.port}`);
-  }
-  const store = new RecordingStore(opts.dir);
+export interface RunningUi {
+  port: number;
+  close(): Promise<void>;
+}
+
+/** Start the viewer server (exported for tests; runUi wraps it). */
+export async function startUiServer(dir: string, port: number): Promise<RunningUi> {
+  const store = new RecordingStore(dir);
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res, store).catch((err: unknown) => {
@@ -52,12 +57,30 @@ export async function runUi(opts: UiOptions): Promise<void> {
     });
   });
 
-  process.stdout.write(`wiretype ui → http://localhost:${port}\n`);
+  const address = server.address();
+  const actualPort = typeof address === 'object' && address !== null ? address.port : port;
+  return {
+    port: actualPort,
+    close: () =>
+      new Promise<void>((res, rej) => {
+        server.close((err) => (err ? rej(err) : res()));
+      }),
+  };
+}
+
+export async function runUi(opts: UiOptions): Promise<void> {
+  const port = Number.parseInt(opts.port, 10);
+  if (Number.isNaN(port)) {
+    throw new Error(`Invalid --port: ${opts.port}`);
+  }
+  const server = await startUiServer(opts.dir, port);
+
+  process.stdout.write(`wiretype ui → http://localhost:${server.port}\n`);
 
   // Keep the process alive until interrupted.
   await new Promise<void>((resolve) => {
     const shutdown = (): void => {
-      server.close(() => resolve());
+      void server.close().then(resolve);
     };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
@@ -113,7 +136,80 @@ async function handleRequest(
     return;
   }
 
+  // /api/diff?a=<ref>&b=<ref>[&ignoreUnmatched=1]
+  if (segments[0] === 'api' && segments[1] === 'diff' && segments.length === 2) {
+    await handleDiff(res, store, url.searchParams);
+    return;
+  }
+
   sendJson(res, 404, { error: `Not found: ${pathname}` });
+}
+
+/**
+ * Resolve a diff side: a readable JSON file (an ApiModel, possibly a claims
+ * file carrying `notAuditable`) or a recording name in the store — same
+ * order as `wiretype diff`.
+ */
+async function resolveSide(
+  store: RecordingStore,
+  ref: string,
+): Promise<{ model: ApiModel; notAuditable?: unknown[] }> {
+  let raw: string | null = null;
+  try {
+    raw = await readFile(resolve(ref), 'utf8');
+  } catch {
+    raw = null;
+  }
+  if (raw !== null) {
+    const parsed = JSON.parse(raw) as {
+      endpoints?: unknown;
+      notAuditable?: unknown;
+    };
+    if (!Array.isArray(parsed.endpoints)) {
+      throw new Error(`File "${ref}" is not a valid ApiModel (no "endpoints" array).`);
+    }
+    return {
+      model: parsed as unknown as ApiModel,
+      notAuditable: Array.isArray(parsed.notAuditable) ? parsed.notAuditable : undefined,
+    };
+  }
+  try {
+    const recording = await store.load(ref);
+    return { model: buildApiModel(recording) };
+  } catch {
+    throw new Error(
+      `Could not resolve "${ref}": not a readable model/claims JSON file and not a recording in the store.`,
+    );
+  }
+}
+
+async function handleDiff(
+  res: ServerResponse,
+  store: RecordingStore,
+  params: URLSearchParams,
+): Promise<void> {
+  const a = params.get('a');
+  const b = params.get('b');
+  if (!a || !b) {
+    sendJson(res, 400, { error: 'Query params "a" and "b" are required (recording name or model.json/claims.json path).' });
+    return;
+  }
+  const ignoreUnmatched = params.get('ignoreUnmatched') === '1' || params.get('ignoreUnmatched') === 'true';
+
+  try {
+    const sideA = await resolveSide(store, a);
+    const sideB = await resolveSide(store, b);
+    const report = diffModels(sideA.model, sideB.model, {
+      ignoreUnmatchedEndpoints: ignoreUnmatched,
+    });
+    sendJson(res, 200, {
+      report,
+      aNotAuditable: sideA.notAuditable ?? [],
+      bNotAuditable: sideB.notAuditable ?? [],
+    });
+  } catch (err) {
+    sendJson(res, 404, { error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 async function serveViewer(res: ServerResponse): Promise<void> {

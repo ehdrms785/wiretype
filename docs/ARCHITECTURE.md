@@ -273,7 +273,18 @@ GET /api/recordings/:name                -> Recording          (full exchanges)
 GET /api/recordings/:name/model         -> ApiModel
 GET /api/recordings/:name/generated/:target  -> text/plain content
       :target = ts | zod | msw | openapi
+GET /api/diff?a=<ref>&b=<ref>[&ignoreUnmatched=1]
+      -> { report: DriftReport, aNotAuditable: [], bNotAuditable: [] }
+      <ref> = model/claims JSON file path (may embed notAuditable) or a
+      recording name; resolution order matches `wiretype diff`. Runs the
+      deterministic engine server-side; 400 on missing params, 404 on an
+      unresolvable ref.
 ```
+
+The viewer's Drift tab drives this endpoint: side b is the active recording
+(observed reality), side a is another recording or a model/claims file path;
+findings render severity-grouped with the Samples (b) column, ⚠ low-
+confidence markers, and the claims `notAuditable` table when present.
 
 CORS: allow *. 404 as `{ "error": "..." }`. Static: `GET /` -> viewer HTML.
 

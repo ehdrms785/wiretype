@@ -162,7 +162,7 @@ export default defineConfig({
 
 설정 파일이 있으면 Vite 플러그인은 `wiretypeRecorder()` 한 줄이면 됩니다.
 
-`wiretype ui`는 zero-dependency 다크 테마 대시보드를 서빙합니다: 엔드포인트별 추론 타입 트리, 요청/응답 원본 탐색, 생성 코드 4종 미리보기 + 복사.
+`wiretype ui`는 zero-dependency 다크 테마 대시보드를 서빙합니다: 엔드포인트별 추론 타입 트리, 요청/응답 원본 탐색, 생성 코드 4종 미리보기 + 복사 — 그리고 **Drift 탭**. 브라우저에서 결정론 diff를 바로 돌립니다: baseline(이전 recording 또는 `claims.json`/`model.json` 파일)을 고르면 어떤 엔드포인트가 어떻게 달라졌는지 심각도별로, 샘플 수 신뢰도 마커와 함께 보여줍니다. 일상의 두 질문 — *"API가 내 MSW mock에서 얼마나 벗어났나?"*, *"내 TS/zod 타입이 거짓말하고 있진 않나?"* — 를 브라우저 안에서 끝냅니다.
 
 ## 동작 원리
 

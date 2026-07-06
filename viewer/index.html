@@ -403,6 +403,57 @@ table.xchg td.dur { color: var(--text-dim); font-family: var(--mono); font-size:
 .empty code { background: var(--bg-3); padding: 2px 8px; border-radius: 5px; color: var(--accent); font-family: var(--mono); }
 .empty .icon { font-size: 34px; opacity: .5; }
 
+/* drift tab */
+.drift-view { display: flex; flex-direction: column; min-width: 0; flex: 1; overflow: auto; }
+.drift-controls {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 12px; background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 14px;
+}
+.drift-controls label { font-size: 12px; color: var(--text-dim); }
+.drift-controls select, .drift-controls input[type=text] {
+  background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--text);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; font-family: var(--mono);
+}
+.drift-controls input[type=text] { min-width: 280px; }
+.drift-controls .chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.drift-direction { font-size: 12px; color: var(--text-faint); margin: 0 0 12px 2px; }
+.drift-direction code { color: var(--accent); background: var(--bg-3); padding: 1px 6px; border-radius: 4px; font-family: var(--mono); }
+.drift-summary {
+  display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+  font-size: 13px; margin-bottom: 4px;
+}
+.drift-summary .pill { font-family: var(--mono); font-weight: 700; padding: 2px 10px; border-radius: 999px; font-size: 12px; }
+.pill-breaking { background: rgba(248, 81, 73, .15); color: var(--s-5xx); }
+.pill-risky { background: rgba(210, 153, 34, .15); color: var(--s-4xx); }
+.pill-info { background: rgba(154, 167, 180, .12); color: var(--text-dim); }
+.pill-zero { opacity: .45; }
+.sev-head { font-weight: 700; font-size: 12px; letter-spacing: .06em; margin: 18px 0 8px; text-transform: uppercase; }
+.sev-breaking { color: var(--s-5xx); }
+.sev-risky { color: var(--s-4xx); }
+.sev-info { color: var(--text-dim); }
+table.drift { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.drift th {
+  text-align: left; color: var(--text-faint); font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .05em; padding: 6px 10px;
+  border-bottom: 1px solid var(--border-strong); white-space: nowrap;
+}
+table.drift td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.drift td.kind { white-space: nowrap; color: var(--text-dim); }
+table.drift td.endpoint { font-family: var(--mono); white-space: nowrap; }
+table.drift td.dpath { font-family: var(--mono); color: var(--syn-key); word-break: break-all; }
+table.drift td.change { font-family: var(--mono); color: var(--syn-type); word-break: break-word; }
+table.drift td.samples { font-family: var(--mono); white-space: nowrap; text-align: right; }
+table.drift td.samples.low { color: var(--s-4xx); font-weight: 700; }
+tr.row-breaking td.kind { color: var(--s-5xx); }
+tr.row-risky td.kind { color: var(--s-4xx); }
+.drift-legend { font-size: 12px; color: var(--s-4xx); margin-top: 12px; }
+.drift-nodrift {
+  display: flex; align-items: center; gap: 10px; padding: 22px;
+  color: var(--s-2xx); font-size: 14px; font-weight: 600;
+}
+.drift-na-head { font-weight: 700; font-size: 12px; letter-spacing: .06em; margin: 22px 0 8px; color: var(--text-faint); text-transform: uppercase; }
+
 .toast-wrap {
   position: fixed; bottom: 18px; right: 18px; z-index: 50;
   display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
@@ -489,6 +540,14 @@ const App = (() => {
     codeCache: {},        // `${name}:${target}` -> string
     loadingModel: false,
     loadingRecording: false,
+
+    /* drift tab */
+    driftA: '',                 // '' | recording name | '::path' sentinel
+    driftAPath: '',             // free-text path when driftA === '::path'
+    driftIgnoreUnmatched: true,
+    driftResult: null,          // { report, aNotAuditable, bNotAuditable } | null
+    driftLoading: false,
+    driftError: null,
   };
 
   /* ---------------- tiny DOM helpers ---------------- */
@@ -904,7 +963,7 @@ const App = (() => {
     }
 
     const tabbar = el('div', { class: 'tabbar' });
-    [['endpoints', 'Endpoints'], ['exchanges', 'Exchanges'], ['code', 'Code']].forEach(([id, label]) => {
+    [['endpoints', 'Endpoints'], ['exchanges', 'Exchanges'], ['code', 'Code'], ['drift', 'Drift']].forEach(([id, label]) => {
       tabbar.appendChild(el('div', {
         class: 'tab' + (state.tab === id ? ' active' : ''),
         text: label,
@@ -919,6 +978,7 @@ const App = (() => {
     if (state.tab === 'endpoints') renderEndpointsView(viewHost);
     else if (state.tab === 'exchanges') renderExchangesView(viewHost);
     else if (state.tab === 'code') renderCodeView(viewHost);
+    else if (state.tab === 'drift') renderDriftView(viewHost);
   }
 
   /* ================================================================
@@ -1340,6 +1400,174 @@ const App = (() => {
   }
 
   /* ================================================================
+   * Drift view — "what changed vs what my code believes"
+   * ================================================================ */
+  const LOW_CONFIDENCE_SAMPLES = 3;
+
+  function driftARef() {
+    if (state.driftA === '::path') return state.driftAPath.trim();
+    return state.driftA;
+  }
+
+  function renderDriftView(host) {
+    host.style.flexDirection = 'column';
+    const view = el('div', { class: 'drift-view' });
+
+    /* controls */
+    const aSelect = el('select', {
+      onchange: (e) => { state.driftA = e.target.value; state.driftResult = null; state.driftError = null; renderContent(); },
+    });
+    aSelect.appendChild(el('option', { value: '', text: '— choose baseline —' }));
+    state.recordings
+      .filter((r) => r.name !== state.activeName)
+      .forEach((r) => aSelect.appendChild(el('option', { value: r.name, text: `recording: ${r.name}` })));
+    aSelect.appendChild(el('option', { value: '::path', text: 'file path (model.json / claims.json)…' }));
+    aSelect.value = state.driftA;
+
+    const controls = el('div', { class: 'drift-controls' },
+      el('label', { text: 'Baseline / claims (a):' }),
+      aSelect,
+      state.driftA === '::path'
+        ? el('input', {
+            type: 'text',
+            placeholder: 'e.g. claims.json or wiretype-generated/model.json',
+            value: state.driftAPath,
+            oninput: (e) => { state.driftAPath = e.target.value; },
+            onkeydown: (e) => { if (e.key === 'Enter') runDrift(); },
+          })
+        : null,
+      el('label', { class: 'chk' },
+        el('input', {
+          type: 'checkbox',
+          ...(state.driftIgnoreUnmatched ? { checked: '' } : {}),
+          onchange: (e) => { state.driftIgnoreUnmatched = e.target.checked; },
+        }),
+        'ignore unmatched endpoints',
+      ),
+      el('button', { class: 'btn', text: 'Compare', onclick: () => runDrift() }),
+    );
+    view.appendChild(controls);
+
+    view.appendChild(el('div', { class: 'drift-direction' },
+      el('span', { html: 'Direction: <code>a</code> = what your code/mocks believe (claims, a committed baseline, an older recording) → <code>b</code> = ' }),
+      el('code', { text: state.activeName || '' }),
+      el('span', { text: ' (this recording = observed reality). breaking = code written against a breaks under b.' }),
+    ));
+
+    /* result area */
+    if (state.driftLoading) {
+      view.appendChild(el('div', { class: 'loading' }, el('span', { class: 'spinner' }), el('span', { text: 'Comparing…' })));
+      host.appendChild(view);
+      return;
+    }
+    if (state.driftError) {
+      view.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon', text: '⚠' }),
+        el('div', { class: 'big', text: state.driftError }),
+      ));
+      host.appendChild(view);
+      return;
+    }
+    if (!state.driftResult) {
+      view.appendChild(el('div', { class: 'empty' },
+        el('div', { class: 'icon', text: '⇄' }),
+        el('div', { class: 'big', text: 'Pick a baseline and hit Compare.' }),
+        el('div', { class: 'hint', html: 'Typical uses: <b>claims.json</b> from <code>wiretype claims</code> (are my TS/zod types lying?) · an <b>older recording</b> (what changed on the wire since my MSW mocks were generated?)' }),
+      ));
+      host.appendChild(view);
+      return;
+    }
+
+    const { report, aNotAuditable } = state.driftResult;
+    const s = report.summary;
+
+    const pill = (label, n, cls) =>
+      el('span', { class: `pill pill-${cls}${n === 0 ? ' pill-zero' : ''}`, text: `${n} ${label}` });
+    view.appendChild(el('div', { class: 'drift-summary' },
+      pill('breaking', s.breaking, 'breaking'),
+      pill('risky', s.risky, 'risky'),
+      pill('info', s.info, 'info'),
+      el('span', { class: 'hint', text: `${s.endpointsCompared} endpoint(s) compared · ${s.endpointsOnlyInA} only in a · ${s.endpointsOnlyInB} only in b` }),
+    ));
+
+    if (!report.findings.length) {
+      view.appendChild(el('div', { class: 'drift-nodrift', text: '✓ No drift detected — code and wire agree.' }));
+    } else {
+      let anyLow = false;
+      [['breaking', 'Breaking'], ['risky', 'Risky'], ['info', 'Info']].forEach(([sev, label]) => {
+        const group = report.findings.filter((f) => f.severity === sev);
+        if (!group.length) return;
+        view.appendChild(el('div', { class: `sev-head sev-${sev}`, text: `${label} (${group.length})` }));
+        const table = el('table', { class: 'drift' });
+        table.appendChild(el('thead', null, el('tr', null,
+          el('th', { text: 'Kind' }), el('th', { text: 'Endpoint' }), el('th', { text: 'Path' }),
+          el('th', { text: 'Change' }), el('th', { text: 'Samples (b)' }),
+        )));
+        const tbody = el('tbody');
+        group.forEach((f) => {
+          const low = f.bSamples !== undefined && f.bSamples < LOW_CONFIDENCE_SAMPLES;
+          if (low) anyLow = true;
+          const pathText = [f.status !== undefined ? `[${f.status}]` : null, f.path].filter(Boolean).join(' ') || '—';
+          tbody.appendChild(el('tr', { class: `row-${sev}`, title: f.message },
+            el('td', { class: 'kind', text: f.kind }),
+            el('td', { class: 'endpoint', text: f.endpoint }),
+            el('td', { class: 'dpath', text: pathText }),
+            el('td', { class: 'change', text: `${f.before ?? '—'} → ${f.after ?? '—'}` }),
+            el('td', { class: 'samples' + (low ? ' low' : ''), text: f.bSamples === undefined ? '—' : (low ? `${f.bSamples} ⚠` : String(f.bSamples)) }),
+          ));
+        });
+        table.appendChild(tbody);
+        view.appendChild(table);
+      });
+      if (anyLow) {
+        view.appendChild(el('div', { class: 'drift-legend', text: `⚠ low confidence: backed by fewer than ${LOW_CONFIDENCE_SAMPLES} observed samples — re-record with more traffic before acting on these.` }));
+      }
+    }
+
+    if (Array.isArray(aNotAuditable) && aNotAuditable.length) {
+      view.appendChild(el('div', { class: 'drift-na-head', text: `Not auditable (${aNotAuditable.length}) — refused by wiretype claims, never guessed` }));
+      const table = el('table', { class: 'drift' });
+      table.appendChild(el('thead', null, el('tr', null,
+        el('th', { text: 'Endpoint' }), el('th', { text: 'Slot' }), el('th', { text: 'Ref' }), el('th', { text: 'Reason' }),
+      )));
+      const tbody = el('tbody');
+      aNotAuditable.forEach((r) => {
+        tbody.appendChild(el('tr', null,
+          el('td', { class: 'endpoint', text: r.endpoint || '' }),
+          el('td', { class: 'kind', text: r.slot || '' }),
+          el('td', { class: 'dpath', text: r.ref || '' }),
+          el('td', { class: 'change', text: r.reason || '' }),
+        ));
+      });
+      table.appendChild(tbody);
+      view.appendChild(table);
+    }
+
+    host.appendChild(view);
+  }
+
+  async function runDrift() {
+    const a = driftARef();
+    if (!a) { toast('Drift', 'Pick a baseline recording or enter a model/claims file path.'); return; }
+    if (!state.activeName) return;
+    state.driftLoading = true;
+    state.driftError = null;
+    renderContent();
+    try {
+      const params = new URLSearchParams({ a, b: state.activeName });
+      if (state.driftIgnoreUnmatched) params.set('ignoreUnmatched', '1');
+      const data = await apiJson(`/api/diff?${params.toString()}`);
+      state.driftResult = data;
+    } catch (err) {
+      state.driftResult = null;
+      state.driftError = err.message || String(err);
+    } finally {
+      state.driftLoading = false;
+      renderContent();
+    }
+  }
+
+  /* ================================================================
    * Actions / data loading
    * ================================================================ */
   function setTab(tab) {
@@ -1381,6 +1609,8 @@ const App = (() => {
     state.activeEndpointKey = null;
     state.activeStatusByEndpoint = {};
     state.codeCache = {};
+    state.driftResult = null;
+    state.driftError = null;
     renderSidebar();
     renderLoadedLabel();
     renderContent();
