@@ -1,6 +1,6 @@
 {
   "name": "wiretype",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Record real API traffic and generate TypeScript types, zod schemas, MSW mocks, and OpenAPI 3.1 specs — from what your backend actually returns.",
   "keywords": [
     "typescript",

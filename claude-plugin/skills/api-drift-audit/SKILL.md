@@ -28,8 +28,14 @@ engine.
 Two conventions apply to everything below:
 
 - **Language**: write all human-facing output (questions, report prose,
-  fix proposals) in the language the user is conversing in. Machine fields
-  (endpoint, path, `before → after`, file paths, code) are never translated.
+  fix proposals) in the language the user is conversing in. When the skill
+  is invoked as a bare slash command with NO prior user prose in the
+  session, do not default to English — infer the user's language from
+  context first (system/CLAUDE.md language, user preferences, README/commit
+  language of the project); if still ambiguous, ask the very first question
+  bilingually (English + 한국어) and lock onto whichever language the user
+  answers in. Machine fields (endpoint, path, `before → after`, file paths,
+  code) are never translated.
 - **Redaction**: when quoting sample values from recordings, redact
   obviously sensitive data (tokens, emails, phone numbers, personal data).
 

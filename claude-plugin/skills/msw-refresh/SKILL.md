@@ -30,8 +30,12 @@ wants schema-level verdicts, hand off to `api-drift-audit`.
 Conventions:
 
 - **Language**: all human-facing output (questions, diff summary, report)
-  in the user's conversation language. Never translate machine fields
-  (endpoints, paths, JSON keys/values, file paths).
+  in the user's conversation language. When invoked as a bare slash command
+  with no prior user prose, do not default to English — infer the language
+  from context (system/CLAUDE.md language, user preferences, README/commit
+  language); if still ambiguous, ask the first question bilingually
+  (English + 한국어) and lock onto the user's reply language. Never
+  translate machine fields (endpoints, paths, JSON keys/values, file paths).
 - **Redaction**: recorded fixtures contain real response data. Before
   quoting samples in chat, redact obviously sensitive values (tokens,
   emails, phone numbers, personal data). Also warn the user if fixtures
