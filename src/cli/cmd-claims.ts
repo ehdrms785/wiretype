@@ -11,7 +11,7 @@ export interface ClaimsCmdOptions {
 }
 
 export async function runClaims(opts: ClaimsCmdOptions): Promise<void> {
-  const { model, notAuditable } = await extractClaims({
+  const { model, notAuditable, tsconfigPath } = await extractClaims({
     mapPath: opts.map,
     tsconfig: opts.tsconfig,
   });
@@ -23,7 +23,8 @@ export async function runClaims(opts: ClaimsCmdOptions): Promise<void> {
   const claimed = model.endpoints.length;
   process.stdout.write(
     `wiretype claims → ${opts.out}\n` +
-      `  ${claimed} endpoint(s) claimed, ${notAuditable.length} refusal(s)\n`,
+      `  ${claimed} endpoint(s) claimed, ${notAuditable.length} refusal(s)\n` +
+      `  tsconfig: ${tsconfigPath ?? '(built-in defaults)'} · strictNullChecks forced ON\n`,
   );
 
   if (model.endpoints.length > 0) {

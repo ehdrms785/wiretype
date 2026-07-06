@@ -76,7 +76,52 @@ async function loadMap(mapPath: string): Promise<{ map: ClaimsMap; baseDir: stri
 /* Program construction                                                */
 /* ------------------------------------------------------------------ */
 
-function buildProgram(ts: Ts, rootFiles: string[], baseDir: string, tsconfig?: string): TS.Program {
+interface BuiltProgram {
+  program: TS.Program;
+  /** The tsconfig the compiler options actually came from (null = built-in defaults). */
+  tsconfigPath: string | null;
+}
+
+/**
+ * A "solution-style" tsconfig (`{ "files": [], "references": [...] }` with no
+ * compilerOptions — the standard vite/tsc monorepo layout) carries no options
+ * itself; naively parsing it yields EMPTY compiler options, which turns
+ * strictNullChecks off and silently erases `| null` from every union.
+ * Follow the first existing reference instead (chains capped at depth 4).
+ */
+function resolveSolutionStyle(ts: Ts, configPath: string, depth = 0): string {
+  if (depth >= 4) return configPath;
+  const read = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (read.error !== undefined) return configPath;
+  const config = read.config as {
+    compilerOptions?: Record<string, unknown>;
+    references?: Array<{ path?: string }>;
+    files?: unknown[];
+  };
+  const hasOwnOptions =
+    config.compilerOptions !== undefined && Object.keys(config.compilerOptions).length > 0;
+  const refs = Array.isArray(config.references) ? config.references : [];
+  if (hasOwnOptions || refs.length === 0) return configPath;
+
+  for (const ref of refs) {
+    if (typeof ref.path !== 'string') continue;
+    let candidate = resolve(dirname(configPath), ref.path);
+    if (!ts.sys.fileExists(candidate)) {
+      const nested = join(candidate, 'tsconfig.json');
+      if (!ts.sys.fileExists(nested)) continue;
+      candidate = nested;
+    }
+    return resolveSolutionStyle(ts, candidate, depth + 1);
+  }
+  return configPath;
+}
+
+function buildProgram(
+  ts: Ts,
+  rootFiles: string[],
+  baseDir: string,
+  tsconfig?: string,
+): BuiltProgram {
   let options: TS.CompilerOptions = {
     strict: true,
     target: ts.ScriptTarget.ES2022,
@@ -87,12 +132,14 @@ function buildProgram(ts: Ts, rootFiles: string[], baseDir: string, tsconfig?: s
     allowJs: false,
   };
 
-  const configPath =
+  let configPath =
     tsconfig !== undefined
       ? resolve(tsconfig)
       : ts.findConfigFile(baseDir, ts.sys.fileExists, 'tsconfig.json');
 
+  let tsconfigPath: string | null = null;
   if (configPath !== undefined) {
+    configPath = resolveSolutionStyle(ts, configPath);
     const read = ts.readConfigFile(configPath, ts.sys.readFile);
     if (read.error === undefined) {
       const parsed = ts.parseJsonConfigFileContent(
@@ -101,10 +148,17 @@ function buildProgram(ts: Ts, rootFiles: string[], baseDir: string, tsconfig?: s
         dirname(configPath),
       );
       options = { ...parsed.options, noEmit: true, skipLibCheck: true };
+      tsconfigPath = configPath;
     }
   }
 
-  return ts.createProgram({ rootNames: rootFiles, options });
+  // NORMATIVE: claims extraction is meaningless without null fidelity — a
+  // project compiling with strictNullChecks off would have every `| null`
+  // erased from its declared unions. Always force it on, regardless of what
+  // the project's tsconfig says.
+  options.strictNullChecks = true;
+
+  return { program: ts.createProgram({ rootNames: rootFiles, options }), tsconfigPath };
 }
 
 /* ------------------------------------------------------------------ */
@@ -392,7 +446,7 @@ export async function extractClaims(opts: ExtractClaimsOptions): Promise<ClaimsR
     }
   }
 
-  const program = buildProgram(ts, [...files].sort(), baseDir, opts.tsconfig);
+  const { program, tsconfigPath } = buildProgram(ts, [...files].sort(), baseDir, opts.tsconfig);
   const checker = program.getTypeChecker();
 
   const refusals: ClaimRefusal[] = [];
@@ -489,5 +543,5 @@ export async function extractClaims(opts: ExtractClaimsOptions): Promise<ClaimsR
     endpoints,
   };
 
-  return { model, notAuditable: refusals };
+  return { model, notAuditable: refusals, tsconfigPath };
 }

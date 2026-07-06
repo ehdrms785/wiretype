@@ -52,6 +52,12 @@ export interface ClaimRefusal {
 export interface ClaimsResult {
   model: ApiModel;
   notAuditable: ClaimRefusal[];
+  /**
+   * The tsconfig the compiler options came from (solution-style configs are
+   * resolved to the referenced project). null = built-in defaults.
+   * strictNullChecks is ALWAYS forced on regardless of this file.
+   */
+  tsconfigPath: string | null;
 }
 
 export interface ExtractClaimsOptions {

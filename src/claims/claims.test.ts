@@ -175,6 +175,69 @@ describe('extractClaims — happy path', () => {
   });
 });
 
+describe('extractClaims — tsconfig handling (null fidelity)', () => {
+  const NULLABLE_TYPES = `
+    export interface Row {
+      plain: string;
+      nullable: string | null;
+    }
+    export interface Resp { rows: Row[]; }
+  `;
+  const MAP = mapJson([{ method: 'GET', pattern: '/api/rows', response: 'types.ts#Resp' }]);
+
+  function nullableShape(model: import('../core/index.js').ApiModel): Shape {
+    const body = model.endpoints[0]!.responses[0]!.bodyShape as ObjectShape;
+    const row = (body.fields.rows!.shape as Extract<Shape, { kind: 'array' }>)
+      .element as ObjectShape;
+    return row.fields.nullable!.shape;
+  }
+
+  it('solution-style tsconfig (files:[] + references) follows the referenced project', async () => {
+    // The standard vite/tsc monorepo layout that erased `| null` in the wild:
+    // a root tsconfig with no compilerOptions, pointing at tsconfig.app.json.
+    const base = await setup({
+      'types.ts': NULLABLE_TYPES,
+      'claims.map.json': MAP,
+      'tsconfig.json': JSON.stringify({
+        files: [],
+        references: [{ path: './tsconfig.app.json' }],
+      }),
+      'tsconfig.app.json': JSON.stringify({
+        compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' },
+        include: ['*.ts'],
+      }),
+    });
+    const { model, notAuditable, tsconfigPath } = await extractClaims({
+      mapPath: join(base, 'claims.map.json'),
+    });
+    expect(notAuditable).toEqual([]);
+    expect(tsconfigPath).toContain('tsconfig.app.json');
+    expect(nullableShape(model)).toEqual({
+      kind: 'union',
+      variants: [{ kind: 'primitive', type: 'string' }, { kind: 'null' }],
+    });
+  });
+
+  it('forces strictNullChecks even when the project disables it', async () => {
+    const base = await setup({
+      'types.ts': NULLABLE_TYPES,
+      'claims.map.json': MAP,
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { strict: false, strictNullChecks: false },
+        include: ['*.ts'],
+      }),
+    });
+    const { model, tsconfigPath } = await extractClaims({
+      mapPath: join(base, 'claims.map.json'),
+    });
+    expect(tsconfigPath).toContain('tsconfig.json');
+    expect(nullableShape(model)).toEqual({
+      kind: 'union',
+      variants: [{ kind: 'primitive', type: 'string' }, { kind: 'null' }],
+    });
+  });
+});
+
 describe('extractClaims — refusals (never guess)', () => {
   it('refuses Date, functions, unresolved generics, and missing exports', async () => {
     const base = await setup({

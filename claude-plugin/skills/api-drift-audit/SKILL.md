@@ -230,6 +230,12 @@ and REFUSES anything it cannot translate faithfully (unresolved generics,
 `notAuditable` array and in stdout. Report them under "not auditable";
 never re-translate a refused type by hand to force a verdict.
 
+Check the `tsconfig:` line in the output: it names the config the compiler
+options came from (solution-style monorepo configs are auto-resolved to the
+referenced project, and strictNullChecks is always forced on so `| null`
+unions survive). If the named tsconfig looks wrong for the audited code,
+pass `--tsconfig` explicitly.
+
 Manual fallback (ONLY when `typescript` is unavailable or the command
 fails): translate types yourself with the table below into a partial
 ApiModel with `"name": "claims", "target": "source-code", "generatedAt": 0`,

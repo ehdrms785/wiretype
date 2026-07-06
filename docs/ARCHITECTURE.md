@@ -521,6 +521,16 @@ the map file's directory. The TypeScript compiler API (optional peer dep
 translates each referenced type into a Shape; the tsconfig nearest to the
 map (or `--tsconfig`) supplies module resolution.
 
+Tsconfig handling (normative, learned in the wild): a solution-style config
+(`{ files: [], references: [...] }` with no compilerOptions — the standard
+vite/tsc monorepo layout) is resolved by following the first existing
+reference (chains capped at depth 4) — parsing it naively yields empty
+options. `strictNullChecks` is ALWAYS forced on after parsing, regardless of
+the project's settings: without it TypeScript erases `| null` from declared
+unions and every nullability claim silently becomes a lie. The CLI prints
+which tsconfig was used (`ClaimsResult.tsconfigPath`) so a wrong resolution
+is visible in one line.
+
 Translation rules: string/number/boolean → primitives (TS numbers are
 `number`, never `integer`); literal unions → sorted `enum`; `X | null` →
 union with null; `X | undefined` / `field?:` → `optional: true` (undefined
