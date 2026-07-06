@@ -1,7 +1,7 @@
 {
   "name": "wiretype",
   "version": "0.4.0",
-  "description": "Record real API traffic and generate TypeScript types, zod schemas, MSW mocks, and OpenAPI 3.1 specs — from what your backend actually returns.",
+  "description": "Record real API traffic and generate TypeScript types, zod schemas, MSW mocks, and OpenAPI 3.1 specs \u2014 from what your backend actually returns.",
   "keywords": [
     "typescript",
     "codegen",
@@ -56,7 +56,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "demo:api": "node examples/demo-api/server.mjs",
-    "prepublishOnly": "npm run clean && npm run build && npm test"
+    "prepublishOnly": "npm run check:versions && npm run clean && npm run build && npm test",
+    "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
     "commander": "^13.0.0"
