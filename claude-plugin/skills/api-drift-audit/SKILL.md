@@ -88,7 +88,20 @@ Two conventions apply to everything below:
    Chrome, a Playwright/browser MCP, etc.) — offer to drive the app
    YOURSELF through the record-mode dev server using the user's existing
    logged-in session. This is the right path for cookie/session auth where
-   no header can be extracted. Strict rules, because a live session on a
+   no header can be extracted.
+
+   When NO browser tooling is connected to the session, do not silently
+   drop this path — tell the user how to enable it and offer to resume:
+   - **Claude Code (CLI/VSCode)**: add a browser MCP, e.g.
+     `claude mcp add playwright -- npx @playwright/mcp@latest`, then
+     restart the session. A Playwright-spawned browser starts with a FRESH
+     profile (no SSO session) — ask the user to perform the login once in
+     that browser, then you navigate read-only from there.
+   - **Cowork / Claude desktop**: connect the Claude in Chrome extension —
+     it drives the user's real Chrome, so the existing logged-in session
+     (SSO cookies included) just works.
+
+   Strict rules, because a live session on a
    shared backend can mutate real data:
    - Get explicit approval first, and say clearly which app/URL you will
      drive and that you will only READ.
