@@ -1,7 +1,7 @@
 {
   "name": "wiretype",
   "displayName": "wiretype — API drift audit & MSW refresh",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Two skills powered by wiretype recordings of real API traffic: api-drift-audit compares what your code believes about API responses (TS types, zod schemas, MSW mocks) with what the wire actually returned, using the deterministic drift engine for verdicts and localized (en/ko) reports; msw-refresh reconciles your existing MSW mock data with freshly recorded responses — diff first, apply only what you approve.",
   "author": {
     "name": "daro",

@@ -113,6 +113,13 @@ export class RecordingStore {
   (distinct <= ceil(samples / 2)). Never for numbers, booleans, or when a
   string format was detected. (Emitters still render numeric enums when a
   hand-built model supplies them.)
+  Vocabulary-vs-data rule (normative, learned in the wild): any observed
+  value that is a CANONICAL numeric string — `String(Number(v)) === v`, e.g.
+  "30", "5", "0.5" — disqualifies the WHOLE field from enum inference, even
+  when other members look word-like ("Bad" | "30" | "20" is a numeric string
+  field, not a vocabulary; the honest suggestion is plain `string`).
+  Code systems survive because their string form is not a canonical number
+  rendering: "050015" (leading zero), "080001", "TEMPLATE_REPORT".
 - Record detection: an object with >= `recordMinKeys` (12) keys whose value
   shapes are all equal -> `RecordShape`.
 - Path normalization: a segment becomes a param when it is all-digits

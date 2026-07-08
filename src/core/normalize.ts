@@ -164,6 +164,22 @@ function coerceQueryValue(v: string): JsonValue {
 /** Token-like strings that plausibly form a closed set: `admin`, `in_progress`, `v1.2`. */
 const ENUM_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/;
 
+/**
+ * True for strings that are CANONICAL decimal renderings of a number
+ * ("30", "5", "-2", "0.5") — i.e. `String(Number(v)) === v`. Such values are
+ * numeric DATA serialized as strings (measurements, thresholds, counts), not
+ * members of a closed vocabulary, and must never be frozen into an enum:
+ * observing "30" | "20" | "10" tells you the field is a numeric string, not
+ * that those three values are the only possible ones. Code-like numerics
+ * survive the test and stay enum-eligible: "050015" (leading zero),
+ * "080001" — their string form is not a canonical number rendering.
+ */
+function isNumericDataString(v: string): boolean {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return false;
+  return String(n) === v;
+}
+
 function applyEnumDetection(shape: Shape, samples: JsonValue[], opts?: BuildModelOptions): Shape {
   const maxValues = opts?.enumMaxValues ?? 8;
   const minSamples = opts?.enumMinSamples ?? 4;
@@ -180,6 +196,11 @@ function applyEnumDetection(shape: Shape, samples: JsonValue[], opts?: BuildMode
         const present = vals.filter((v) => typeof v === 'string');
         if (present.length < minSamples) return s;
         if (!present.every((v) => ENUM_TOKEN_RE.test(v))) return s;
+        // Numeric data serialized as strings ("30", "5", "0.5") disqualifies
+        // the whole field: a set containing measurements is not a vocabulary,
+        // even if other members look word-like (e.g. "Bad" | "30" | "20").
+        // The honest suggestion for such a field is plain `string`.
+        if (present.some((v) => isNumericDataString(v))) return s;
         const distinct: string[] = [];
         const seen = new Set<string>();
         for (const v of present) {
@@ -208,8 +229,11 @@ function applyEnumDetection(shape: Shape, samples: JsonValue[], opts?: BuildMode
             }
           }
           fields[key] = { shape: walk(f.shape, childVals), optional: f.optional };
+          if (f.seen !== undefined) fields[key]!.seen = f.seen;
         }
-        return { kind: 'object', fields };
+        const rebuilt: Shape = { kind: 'object', fields };
+        if (s.samples !== undefined) rebuilt.samples = s.samples;
+        return rebuilt;
       }
       case 'record': {
         const childVals: JsonValue[] = [];
@@ -256,8 +280,10 @@ function applyRecordDetection(shape: Shape, opts?: BuildModelOptions): Shape {
           const f = s.fields[key];
           if (f === undefined) continue;
           fields[key] = { shape: walk(f.shape), optional: f.optional };
+          if (f.seen !== undefined) fields[key]!.seen = f.seen;
         }
         const rebuilt: Shape = { kind: 'object', fields };
+        if (s.samples !== undefined) rebuilt.samples = s.samples;
         if (keys.length >= minKeys) {
           const valueShapes = keys.map((k) => fields[k]?.shape).filter((x): x is Shape => x !== undefined);
           if (valueShapes.length === keys.length && allEqual(valueShapes)) {

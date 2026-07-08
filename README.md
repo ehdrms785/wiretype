@@ -112,7 +112,7 @@ wiretype merges every observed sample per endpoint, so the more you click, the m
 | Per-status responses | 200 and 404 become separate types (`GetUserResponse`, `GetUserResponse404`) |
 | Query params | `?page=2&limit=10` → `{ page: number; limit: number }` |
 
-Enum detection is deliberately conservative: only token-like strings (`admin`, `in_progress`) that actually *repeat* across 4+ samples become literal unions — so ids and titles never get frozen into enums.
+Enum detection is deliberately conservative: only token-like strings (`admin`, `in_progress`) that actually *repeat* across 4+ samples become literal unions — so ids and titles never get frozen into enums. Numeric data serialized as strings (`"30"`, `"5"`) disqualifies a field entirely — `"Bad" | "30" | "20"` is a numeric string field, not a vocabulary — while code systems like `"050015"` (leading zero) or `"TEMPLATE_REPORT"` stay enum-eligible.
 
 ### Example output
 

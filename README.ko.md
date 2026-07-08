@@ -126,7 +126,7 @@ mock 데이터를 핸들러 코드에서 분리하고 싶다면 `wiretype gen --
 | 상태코드별 응답 | 200과 404가 별도 타입으로 (`GetUserResponse`, `GetUserResponse404`) |
 | 쿼리 파라미터 | `?page=2&limit=10` → `{ page: number; limit: number }` |
 
-enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, `in_progress`)이 4개 이상 샘플에서 실제로 *반복*될 때만 리터럴 유니온이 됩니다 — id나 제목이 enum으로 굳는 사고를 방지합니다.
+enum 감지는 의도적으로 보수적입니다: 토큰형 문자열(`admin`, `in_progress`)이 4개 이상 샘플에서 실제로 *반복*될 때만 리터럴 유니온이 됩니다 — id나 제목이 enum으로 굳는 사고를 방지합니다. 문자열로 직렬화된 숫자 데이터(`"30"`, `"5"`)가 하나라도 있으면 그 필드는 enum 대상에서 제외됩니다 — `"Bad" | "30" | "20"`은 어휘가 아니라 숫자 문자열 필드니까요. 반면 `"050015"`(leading zero)나 `"TEMPLATE_REPORT"` 같은 코드 체계는 enum 후보로 유지됩니다.
 
 ## CLI
 
